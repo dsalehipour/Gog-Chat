@@ -28,6 +28,11 @@ export interface Settings {
   model: string;
   gogAccount: string;
   customModels: string[];
+  maxTokens: number;
+  maxIterations: number;
+  maxContextChars: number;
+  systemPrompt: string;
+  driveSyncEnabled: boolean;
 }
 
 export const DEFAULT_MODELS = [
@@ -43,4 +48,9 @@ export const DEFAULT_SETTINGS: Settings = {
   model: "claude-opus-4-6",
   gogAccount: "",
   customModels: [],
+  maxTokens: 16384,
+  maxIterations: 40,
+  maxContextChars: 180_000,
+  systemPrompt: "",
+  driveSyncEnabled: true,
 };

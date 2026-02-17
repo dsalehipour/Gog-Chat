@@ -14,6 +14,11 @@ import {
   Upload,
   Shield,
   Loader2,
+  Settings2,
+  MessageSquare,
+  HardDrive,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
 import { DEFAULT_MODELS, DEFAULT_SETTINGS, type Settings } from "@/lib/types";
 
@@ -37,6 +42,7 @@ export default function SettingsPanel({
   const [local, setLocal] = useState<Settings>(settings);
   const [newModel, setNewModel] = useState("");
   const [saved, setSaved] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // Auth state
   const [hasCredentials, setHasCredentials] = useState<boolean | null>(null);
@@ -422,6 +428,120 @@ export default function SettingsPanel({
                     </button>
                   </div>
                 ))}
+              </div>
+            )}
+          </section>
+
+          {/* Drive Sync Toggle */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-text-secondary flex items-center gap-2">
+                <HardDrive size={15} />
+                Google Drive Sync
+              </label>
+              <button
+                onClick={() => setLocal({ ...local, driveSyncEnabled: !local.driveSyncEnabled })}
+                className={`relative w-10 h-5.5 rounded-full transition-colors cursor-pointer ${
+                  local.driveSyncEnabled ? "bg-accent" : "bg-bg-tertiary border border-border"
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4.5 h-4.5 rounded-full bg-white shadow transition-transform ${
+                  local.driveSyncEnabled ? "translate-x-[18px]" : ""
+                }`} />
+              </button>
+            </div>
+            <p className="text-xs text-text-muted">
+              {local.driveSyncEnabled
+                ? "Conversations are backed up to a GogChat folder in your Google Drive."
+                : "Drive sync is off. Conversations are only stored locally."}
+            </p>
+          </section>
+
+          {/* System Prompt */}
+          <section className="space-y-3">
+            <label className="text-sm font-medium text-text-secondary flex items-center gap-2">
+              <MessageSquare size={15} />
+              Custom System Prompt
+            </label>
+            <textarea
+              value={local.systemPrompt}
+              onChange={(e) => setLocal({ ...local, systemPrompt: e.target.value })}
+              placeholder="Add custom instructions for the AI... (e.g. 'Always respond in Spanish' or 'You are helping with accounting')"
+              rows={3}
+              className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm resize-none placeholder:text-text-muted focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all"
+            />
+            <p className="text-xs text-text-muted">
+              Prepended to the default system prompt. Leave empty to use defaults.
+            </p>
+          </section>
+
+          {/* Advanced Settings */}
+          <section className="space-y-3">
+            <button
+              onClick={() => setAdvancedOpen(!advancedOpen)}
+              className="flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-text transition-colors cursor-pointer"
+            >
+              <Settings2 size={15} />
+              Advanced
+              {advancedOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+
+            {advancedOpen && (
+              <div className="space-y-4 pl-1">
+                {/* Max Tokens */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-secondary">Max Tokens per Response</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={65536}
+                    value={local.maxTokens}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (v > 0 && v <= 65536) setLocal({ ...local, maxTokens: v });
+                    }}
+                    className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all"
+                  />
+                  <p className="text-[10px] text-text-muted">Max 65,536. Controls how long each AI response can be.</p>
+                </div>
+
+                {/* Max Iterations */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-secondary">Max Tool Iterations</label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={local.maxIterations}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (v > 0) setLocal({ ...local, maxIterations: v });
+                    }}
+                    className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all"
+                  />
+                  <p className="text-[10px] text-text-muted">How many gog commands the AI can chain per request. No upper limit.</p>
+                </div>
+
+                {/* Max Context */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-text-secondary">Context Window Limit (characters)</label>
+                  <input
+                    type="number"
+                    min={10000}
+                    max={1_000_000}
+                    step={10000}
+                    value={local.maxContextChars}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (v >= 10000 && v <= 1_000_000) setLocal({ ...local, maxContextChars: v });
+                    }}
+                    className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm font-mono focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all"
+                  />
+                  <p className="text-[10px] text-text-muted">10K–1M. How much conversation history is sent. Higher = better memory, more cost.</p>
+                </div>
+
+                <p className="text-[11px] text-text-muted">
+                  Higher values use more API tokens and cost more. Defaults work well for most use cases.
+                </p>
               </div>
             )}
           </section>

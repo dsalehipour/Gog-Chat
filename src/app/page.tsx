@@ -33,7 +33,13 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    // Merge with fallback so new fields get their defaults
+    if (typeof fallback === "object" && fallback !== null && !Array.isArray(fallback)) {
+      return { ...fallback, ...parsed };
+    }
+    return parsed;
   } catch {
     return fallback;
   }
@@ -169,30 +175,35 @@ export default function Home() {
       backupToServer(loaded);
     }
 
-    // Pull from Drive and merge
-    (async () => {
-      try {
-        setSyncStatus("syncing");
-        const res = await fetch("/api/conversations/sync");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.conversations && Array.isArray(data.conversations)) {
-            skipNextSync.current = true;
-            setConversations((prev) => {
-              const merged = mergeLocal(prev, data.conversations);
-              saveToStorage("gc_conversations", merged);
-              backupToServer(merged);
-              return merged;
-            });
+    // Pull from Drive and merge (if sync enabled)
+    const savedSettings = loadFromStorage("gc_settings", DEFAULT_SETTINGS);
+    if (savedSettings.driveSyncEnabled !== false) {
+      (async () => {
+        try {
+          setSyncStatus("syncing");
+          const res = await fetch("/api/conversations/sync");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.conversations && Array.isArray(data.conversations)) {
+              skipNextSync.current = true;
+              setConversations((prev) => {
+                const merged = mergeLocal(prev, data.conversations);
+                saveToStorage("gc_conversations", merged);
+                backupToServer(merged);
+                return merged;
+              });
+            }
           }
+          setSyncStatus("synced");
+          setTimeout(() => setSyncStatus("idle"), 3000);
+        } catch {
+          setSyncStatus("idle");
         }
-        setSyncStatus("synced");
-        setTimeout(() => setSyncStatus("idle"), 3000);
-      } catch {
-        setSyncStatus("idle");
-      }
+        initialLoadDone.current = true;
+      })();
+    } else {
       initialLoadDone.current = true;
-    })();
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -217,9 +228,11 @@ export default function Home() {
         return;
       }
       backupToServer(conversations);
-      scheduleDriveSync();
+      if (settings.driveSyncEnabled) {
+        scheduleDriveSync();
+      }
     }
-  }, [conversations, backupToServer, scheduleDriveSync]);
+  }, [conversations, backupToServer, scheduleDriveSync, settings.driveSyncEnabled]);
 
   useEffect(() => {
     saveToStorage("gc_activeConv", activeConvId);
@@ -308,6 +321,10 @@ export default function Home() {
             apiKey: settings.apiKey,
             model: settings.model,
             gogAccount: settings.gogAccount || undefined,
+            maxTokens: settings.maxTokens,
+            maxIterations: settings.maxIterations,
+            maxContextChars: settings.maxContextChars,
+            systemPrompt: settings.systemPrompt || undefined,
           }),
           signal: controller.signal,
         });

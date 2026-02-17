@@ -9,6 +9,10 @@ interface ChatRequest {
   apiKey: string;
   model: string;
   gogAccount?: string;
+  maxTokens?: number;
+  maxIterations?: number;
+  maxContextChars?: number;
+  systemPrompt?: string;
 }
 
 const GOG_SERVICE_MAP: Record<string, string> = {
@@ -23,10 +27,9 @@ const GOG_SERVICE_MAP: Record<string, string> = {
   gog_auth: "auth",
 };
 
-const MAX_CONTEXT_CHARS = 180_000;
-
 function trimMessages(
   messages: Anthropic.Messages.MessageParam[],
+  maxContextChars: number = 180_000,
 ): Anthropic.Messages.MessageParam[] {
   let totalChars = 0;
   for (const m of messages) {
@@ -39,7 +42,7 @@ function trimMessages(
     }
   }
 
-  if (totalChars <= MAX_CONTEXT_CHARS) return messages;
+  if (totalChars <= maxContextChars) return messages;
 
   // Keep the system context fresh: drop oldest pairs but always keep last 4 messages
   const keep = Math.max(4, Math.floor(messages.length / 2));
@@ -85,21 +88,27 @@ export async function POST(request: Request) {
         };
 
         try {
+          const cfgMaxTokens = body.maxTokens || 16384;
+          const cfgMaxIter = body.maxIterations || 40;
+          const cfgMaxCtx = body.maxContextChars || 180_000;
+          const cfgSystem = body.systemPrompt
+            ? body.systemPrompt + "\n\n" + SYSTEM_PROMPT
+            : SYSTEM_PROMPT;
+
           let continueLoop = true;
-          let currentMessages = trimMessages([...messages]);
+          let currentMessages = trimMessages([...messages], cfgMaxCtx);
           let iterationCount = 0;
           let accumulatedText = "";
-          const maxIterations = 40;
 
-          while (continueLoop && iterationCount < maxIterations) {
+          while (continueLoop && iterationCount < cfgMaxIter) {
             iterationCount++;
 
             let response: Anthropic.Messages.Message;
             try {
               response = await client.messages.create({
                 model: body.model,
-                max_tokens: 16384,
-                system: SYSTEM_PROMPT,
+                max_tokens: cfgMaxTokens,
+                system: cfgSystem,
                 tools: GOG_TOOLS,
                 messages: currentMessages,
               });
@@ -113,7 +122,7 @@ export async function POST(request: Request) {
 
               if (e.status === 400 && e.message?.includes("token")) {
                 // Context too long — aggressively trim and retry once
-                currentMessages = trimMessages(currentMessages.slice(-4));
+                currentMessages = trimMessages(currentMessages.slice(-4), cfgMaxCtx);
                 if (currentMessages.length > 0 && currentMessages[0].role !== "user") {
                   currentMessages.shift();
                 }
@@ -201,7 +210,7 @@ export async function POST(request: Request) {
                 { role: "user" as const, content: toolResults },
               ];
               // Trim if the agentic loop is getting too large
-              currentMessages = trimMessages(currentMessages);
+              currentMessages = trimMessages(currentMessages, cfgMaxCtx);
             } else {
               continueLoop = false;
             }
@@ -211,7 +220,7 @@ export async function POST(request: Request) {
             }
           }
 
-          if (iterationCount >= maxIterations) {
+          if (iterationCount >= cfgMaxIter) {
             send({ type: "text", content: "\n\n(Reached maximum number of steps. Please continue in a follow-up message.)" });
           }
 
