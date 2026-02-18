@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   Plus,
   MessageSquare,
@@ -23,6 +23,12 @@ import {
   CloudOff,
   Loader2,
   Check,
+  Search,
+  Sunrise,
+  CalendarClock,
+  ListChecks,
+  Timer,
+  PenLine,
 } from "lucide-react";
 import type { Conversation } from "@/lib/types";
 import type { SyncStatus } from "@/app/page";
@@ -35,9 +41,13 @@ interface Props {
   onRestore: (id: string) => void;
   onOpenSettings: () => void;
   onServiceClick: (serviceKey: string) => void;
+  onScrollToSection: (section: string) => void;
+  onUnifiedSearch: (query: string) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
   syncStatus: SyncStatus;
+  followUpCount: number;
+  draftCount: number;
 }
 
 const SERVICE_ICONS = [
@@ -50,6 +60,14 @@ const SERVICE_ICONS = [
   { icon: Users, label: "Contacts", color: "text-google-red", key: "contacts" },
 ];
 
+const FEATURE_NAV = [
+  { icon: Sunrise, label: "Briefing", section: "briefing" },
+  { icon: ListChecks, label: "Follow-ups", section: "followups" },
+  { icon: PenLine, label: "Drafts", section: "drafts" },
+  { icon: Timer, label: "Routines", section: "routines" },
+  { icon: CalendarClock, label: "Recap", section: "recap" },
+] as const;
+
 export default function Sidebar({
   conversations,
   activeId,
@@ -58,22 +76,92 @@ export default function Sidebar({
   onRestore,
   onOpenSettings,
   onServiceClick,
+  onScrollToSection,
+  onUnifiedSearch,
   theme,
   onToggleTheme,
   syncStatus,
+  followUpCount,
+  draftCount,
 }: Props) {
   const [showArchived, setShowArchived] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIndex, setSelectedIndex] = useState(-1);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const active = conversations.filter((c) => !c.archived);
   const archived = conversations.filter((c) => c.archived);
   const starred = active.filter((c) => c.starred);
   const unstarred = active.filter((c) => !c.starred);
 
+  const badgeCounts: Record<string, number> = {
+    followups: followUpCount,
+    drafts: draftCount,
+  };
+
+  const searchResults = searchQuery.trim()
+    ? active.filter((c) =>
+        (c.title || "New conversation").toLowerCase().includes(searchQuery.toLowerCase()),
+      )
+    : [];
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedIndex((i) => Math.min(i + 1, searchResults.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedIndex((i) => Math.max(i - 1, -1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (selectedIndex >= 0 && selectedIndex < searchResults.length) {
+        onSelect(searchResults[selectedIndex].id);
+        setSearchQuery("");
+        setDropdownOpen(false);
+      } else if (searchQuery.trim()) {
+        onUnifiedSearch(searchQuery.trim());
+        setSearchQuery("");
+        setDropdownOpen(false);
+      }
+    } else if (e.key === "Escape") {
+      setDropdownOpen(false);
+      setSearchQuery("");
+    }
+  };
+
+  function highlightMatch(text: string, query: string): React.ReactNode {
+    if (!query.trim()) return text;
+    const idx = text.toLowerCase().indexOf(query.toLowerCase());
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <span className="bg-accent/30 text-accent">{text.slice(idx, idx + query.length)}</span>
+        {text.slice(idx + query.length)}
+      </>
+    );
+  }
+
   return (
     <div className="w-64 h-full bg-bg-secondary border-r border-border flex flex-col">
       {/* Header */}
       <div className="p-4 border-b border-border">
-        <div className="flex items-center gap-2.5 mb-4">
+        <div
+          className="flex items-center gap-2.5 mb-4 cursor-pointer"
+          onClick={() => onScrollToSection("briefing")}
+        >
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-google-blue via-google-red to-google-yellow shadow-sm flex items-center justify-center">
             <span className="text-white font-bold text-sm">G</span>
           </div>
@@ -92,8 +180,62 @@ export default function Sidebar({
         </button>
       </div>
 
-      {/* Quick actions strip */}
-      <div className="px-4 py-3 border-b border-border">
+      {/* Unified Search with conversation dropdown */}
+      <div className="px-4 pt-3 pb-1" ref={searchRef}>
+        <div className="relative">
+          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
+          <input
+            ref={inputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => { setSearchQuery(e.target.value); setSelectedIndex(-1); setDropdownOpen(true); }}
+            onKeyDown={handleSearchKeyDown}
+            onFocus={() => { if (searchQuery.trim()) setDropdownOpen(true); }}
+            placeholder="Search everything..."
+            className="w-full bg-bg-tertiary border border-border rounded-lg pl-8 pr-3 py-1.5 text-xs placeholder:text-text-muted focus:outline-none focus:border-accent/40 transition-all"
+          />
+
+          {dropdownOpen && searchResults.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-bg-secondary border border-border rounded-lg shadow-xl z-30 max-h-60 overflow-y-auto">
+              {searchResults.slice(0, 10).map((conv, i) => (
+                <button
+                  key={conv.id}
+                  onClick={() => {
+                    onSelect(conv.id);
+                    setSearchQuery("");
+                    setDropdownOpen(false);
+                  }}
+                  className={`w-full text-left flex items-center gap-2 px-3 py-2 text-xs transition-colors cursor-pointer ${
+                    i === selectedIndex
+                      ? "bg-accent/10 text-accent"
+                      : "text-text-secondary hover:bg-bg-hover"
+                  }`}
+                >
+                  <MessageSquare size={12} className="shrink-0 opacity-40" />
+                  <span className="truncate">
+                    {highlightMatch(conv.title || "New conversation", searchQuery)}
+                  </span>
+                </button>
+              ))}
+              <div className="border-t border-border px-3 py-2">
+                <button
+                  onClick={() => {
+                    onUnifiedSearch(searchQuery.trim());
+                    setSearchQuery("");
+                    setDropdownOpen(false);
+                  }}
+                  className="w-full text-left text-[11px] text-accent hover:text-accent-hover cursor-pointer"
+                >
+                  Search Google services for &quot;{searchQuery}&quot;...
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Service icons strip */}
+      <div className="px-4 py-2 border-b border-border">
         <div className="flex items-center justify-between">
           {SERVICE_ICONS.map(({ icon: Icon, label, color, key }) => (
             <div key={key} className="group relative">
@@ -111,8 +253,23 @@ export default function Sidebar({
         </div>
       </div>
 
-      {/* Conversations */}
-      <div className="flex-1 overflow-y-auto py-2 px-2 space-y-1">
+      {/* Feature nav + Conversations (single scrollable area) */}
+      <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+        {FEATURE_NAV.map(({ icon: Icon, label, section }) => (
+          <button
+            key={section}
+            onClick={() => onScrollToSection(section)}
+            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text hover:bg-bg-hover transition-all cursor-pointer relative"
+          >
+            <Icon size={14} className="shrink-0 opacity-60" />
+            <span>{label}</span>
+            {(badgeCounts[section] ?? 0) > 0 && (
+              <span className="ml-auto text-[10px] bg-accent/15 text-accent px-1.5 py-0.5 rounded-full font-medium">
+                {badgeCounts[section] > 9 ? "9+" : badgeCounts[section]}
+              </span>
+            )}
+          </button>
+        ))}
         {active.length === 0 && archived.length === 0 && (
           <div className="text-center py-8">
             <MessageSquare size={24} className="text-text-muted mx-auto mb-2 opacity-40" />
@@ -122,7 +279,7 @@ export default function Sidebar({
 
         {starred.length > 0 && (
           <>
-            <div className="px-2 pt-1 pb-0.5 text-[10px] font-medium text-text-muted uppercase tracking-wider">
+            <div className="px-2 pt-5 pb-0.5 text-[10px] font-medium text-text-muted uppercase tracking-wider">
               Starred
             </div>
             {starred.map((conv) => (
@@ -145,7 +302,7 @@ export default function Sidebar({
         )}
 
         {starred.length > 0 && unstarred.length > 0 && (
-          <div className="px-2 pt-2 pb-0.5 text-[10px] font-medium text-text-muted uppercase tracking-wider">
+          <div className="px-2 pt-5 pb-0.5 text-[10px] font-medium text-text-muted uppercase tracking-wider">
             Recent
           </div>
         )}
@@ -172,7 +329,7 @@ export default function Sidebar({
           <>
             <button
               onClick={() => setShowArchived(!showArchived)}
-              className="flex items-center gap-1.5 px-2 pt-3 pb-1 text-[10px] font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-secondary transition-colors w-full"
+              className="flex items-center gap-1.5 px-2 pt-5 pb-1 text-[10px] font-medium text-text-muted uppercase tracking-wider cursor-pointer hover:text-text-secondary transition-colors w-full"
             >
               {showArchived ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
               Archived ({archived.length})
@@ -202,7 +359,6 @@ export default function Sidebar({
 
       {/* Footer */}
       <div className="p-3 border-t border-border space-y-0.5">
-        {/* Sync status */}
         <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] text-text-muted">
           {syncStatus === "syncing" && (
             <>

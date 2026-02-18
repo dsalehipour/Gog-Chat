@@ -475,6 +475,7 @@ export default function SettingsPanel({
             </p>
           </section>
 
+
           {/* Advanced Settings */}
           <section className="space-y-3">
             <button
@@ -575,6 +576,7 @@ export default function SettingsPanel({
     </div>
   );
 }
+
 
 function Terminal({ size, className }: { size: number; className?: string }) {
   return (

@@ -3,15 +3,21 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import Sidebar from "@/components/Sidebar";
 import ChatInterface from "@/components/ChatInterface";
+import DashboardView from "@/components/DashboardView";
 import SettingsPanel from "@/components/SettingsPanel";
 import ServicePanel from "@/components/ServicePanel";
+import UnifiedSearchPanel from "@/components/UnifiedSearchPanel";
 import {
   DEFAULT_SETTINGS,
   type Settings,
   type Conversation,
   type Message,
   type ToolExecution,
+  type FollowUp,
+  type Routine,
+  type EmailStyleProfile,
 } from "@/lib/types";
+import { isDue, getNextRunTime } from "@/lib/scheduler";
 
 interface StreamEvent {
   type: "text" | "tool_call" | "tool_result" | "error" | "done";
@@ -35,7 +41,6 @@ function loadFromStorage<T>(key: string, fallback: T): T {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw);
-    // Merge with fallback so new fields get their defaults
     if (typeof fallback === "object" && fallback !== null && !Array.isArray(fallback)) {
       return { ...fallback, ...parsed };
     }
@@ -67,6 +72,7 @@ function mergeLocal(local: Conversation[], remote: Conversation[]): Conversation
 }
 
 export default function Home() {
+  // --- Core state ---
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeConvId, setActiveConvId] = useState<string | null>(null);
@@ -84,18 +90,45 @@ export default function Home() {
   const [streamToolCalls, setStreamToolCalls] = useState<StreamEvent[]>([]);
   const [syncStatus, setSyncStatus] = useState<SyncStatus>("idle");
   const [activeService, setActiveService] = useState<string | null>(null);
+
+  // --- Feature state ---
+  const [unifiedSearchOpen, setUnifiedSearchOpen] = useState(false);
+  const [unifiedSearchQuery, setUnifiedSearchQuery] = useState("");
+  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
+  const [routines, setRoutines] = useState<Routine[]>([]);
+  const [emailStyle, setEmailStyle] = useState<EmailStyleProfile | null>(null);
+
+  // Dashboard scroll-to target
+  const [scrollToSection, setScrollToSection] = useState<string | null>(null);
+
+  // --- Refs ---
   const abortRef = useRef<AbortController | null>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadDone = useRef(false);
   const skipNextSync = useRef(false);
   const conversationsRef = useRef<Conversation[]>([]);
+  const routineCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevActiveConvIdRef = useRef<string | null>(null);
 
-  // Keep ref in sync for use in callbacks
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
 
-  // Backup conversations to server (local file)
+  useEffect(() => {
+    const prevId = prevActiveConvIdRef.current;
+    prevActiveConvIdRef.current = activeConvId;
+    if (prevId && prevId !== activeConvId) {
+      setConversations((prev) => {
+        const old = prev.find((c) => c.id === prevId);
+        if (old && old.messages.length === 0 && !old.title && !old.starred) {
+          return prev.filter((c) => c.id !== prevId);
+        }
+        return prev;
+      });
+    }
+  }, [activeConvId]);
+
+  // --- Persistence helpers ---
   const backupToServer = useCallback(async (convos: Conversation[]) => {
     try {
       await fetch("/api/conversations/backup", {
@@ -103,12 +136,9 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ conversations: convos }),
       });
-    } catch {
-      // Silent fail for backup - localStorage is still primary
-    }
+    } catch { /* Silent */ }
   }, []);
 
-  // Push changed conversations to Google Drive
   const pushToDrive = useCallback(async (convos: Conversation[]) => {
     const withMessages = convos.filter((c) => c.messages.length > 0);
     if (withMessages.length === 0) return;
@@ -129,11 +159,12 @@ export default function Home() {
       const data = await res.json();
 
       if (data.results && Array.isArray(data.results)) {
-        // Flag to prevent this metadata-only update from re-triggering sync
         skipNextSync.current = true;
         setConversations((prev) => {
           const updated = prev.map((c) => {
-            const result = data.results.find((r: { id: string; driveFileId: string }) => r.id === c.id);
+            const result = data.results.find(
+              (r: { id: string; driveFileId: string }) => r.id === c.id,
+            );
             if (result?.success && result.driveFileId && result.driveFileId !== c.driveFileId) {
               return { ...c, driveFileId: result.driveFileId };
             }
@@ -152,7 +183,6 @@ export default function Home() {
     }
   }, []);
 
-  // Debounced sync: schedules a Drive push after changes settle
   const scheduleDriveSync = useCallback(() => {
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     syncTimeoutRef.current = setTimeout(() => {
@@ -160,22 +190,24 @@ export default function Home() {
     }, 5000);
   }, [pushToDrive]);
 
-  // Load persisted state + initial backup + Drive pull
+  // --- Load persisted state ---
   useEffect(() => {
     const loaded = loadFromStorage<Conversation[]>("gc_conversations", []);
     setSettings(loadFromStorage("gc_settings", DEFAULT_SETTINGS));
     setConversations(loaded);
     setActiveConvId(loadFromStorage("gc_activeConv", null));
+    setFollowUps(loadFromStorage<FollowUp[]>("gc_followups", []));
+    setRoutines(loadFromStorage<Routine[]>("gc_routines", []));
+    setEmailStyle(loadFromStorage<EmailStyleProfile | null>("gc_email_style", null));
+
     const saved = loadFromStorage<"light" | "dark">("gc_theme", "dark");
     setTheme(saved);
     document.documentElement.setAttribute("data-theme", saved);
 
-    // Immediately back up to local server file
     if (loaded.length > 0) {
       backupToServer(loaded);
     }
 
-    // Pull from Drive and merge (if sync enabled)
     const savedSettings = loadFromStorage("gc_settings", DEFAULT_SETTINGS);
     if (savedSettings.driveSyncEnabled !== false) {
       (async () => {
@@ -204,10 +236,9 @@ export default function Home() {
     } else {
       initialLoadDone.current = true;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Check gog status
   useEffect(() => {
     fetch("/api/status")
       .then((r) => r.json())
@@ -215,7 +246,6 @@ export default function Home() {
       .catch(() => setGogStatus({ installed: false }));
   }, []);
 
-  // Persist changes + schedule Drive sync
   useEffect(() => {
     saveToStorage("gc_settings", settings);
   }, [settings]);
@@ -238,6 +268,64 @@ export default function Home() {
     saveToStorage("gc_activeConv", activeConvId);
   }, [activeConvId]);
 
+  useEffect(() => {
+    saveToStorage("gc_followups", followUps);
+  }, [followUps]);
+
+  useEffect(() => {
+    saveToStorage("gc_routines", routines);
+  }, [routines]);
+
+  useEffect(() => {
+    if (emailStyle) saveToStorage("gc_email_style", emailStyle);
+  }, [emailStyle]);
+
+  // --- Routine scheduler ---
+  useEffect(() => {
+    if (routineCheckRef.current) clearInterval(routineCheckRef.current);
+
+    routineCheckRef.current = setInterval(() => {
+      setRoutines((prev) => {
+        let changed = false;
+        const updated = prev.map((r) => {
+          if (!isDue(r)) return r;
+          changed = true;
+
+          const convId = generateId();
+          const conv: Conversation = {
+            id: convId,
+            title: `[Routine] ${r.instruction.slice(0, 50)}`,
+            messages: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+          };
+          setConversations((c) => [conv, ...c]);
+          setActiveConvId(convId);
+
+          setTimeout(() => {
+            handleSendMessageDirect(convId, r.instruction);
+          }, 500);
+
+          return {
+            ...r,
+            lastRun: Date.now(),
+            nextRun: getNextRunTime({ ...r, lastRun: Date.now() }),
+            conversationIds: [...r.conversationIds, convId],
+            enabled: r.schedule.type === "once" ? false : r.enabled,
+          };
+        });
+        if (changed) return updated;
+        return prev;
+      });
+    }, 60_000);
+
+    return () => {
+      if (routineCheckRef.current) clearInterval(routineCheckRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- Conversation helpers ---
   const activeConversation = conversations.find((c) => c.id === activeConvId);
 
   const updateConversation = useCallback(
@@ -259,6 +347,13 @@ export default function Home() {
   }, []);
 
   const createConversation = useCallback((): string => {
+    const existing = conversations.find(
+      (c) => !c.archived && c.messages.length === 0 && !c.title,
+    );
+    if (existing) {
+      setActiveConvId(existing.id);
+      return existing.id;
+    }
     const id = generateId();
     const conv: Conversation = {
       id,
@@ -270,7 +365,90 @@ export default function Home() {
     setConversations((prev) => [conv, ...prev]);
     setActiveConvId(id);
     return id;
-  }, []);
+  }, [conversations]);
+
+  const handleSendMessageDirect = useCallback(
+    async (convId: string, content: string) => {
+      const userMessage: Message = {
+        id: generateId(),
+        role: "user",
+        content,
+        timestamp: Date.now(),
+      };
+
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                title: c.title || content.slice(0, 60),
+                messages: [...c.messages, userMessage],
+                updatedAt: Date.now(),
+              }
+            : c,
+        ),
+      );
+
+      const currentSettings = loadFromStorage("gc_settings", DEFAULT_SETTINGS);
+      const apiMessages = [{ role: "user" as const, content }];
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: apiMessages,
+            apiKey: currentSettings.apiKey,
+            model: currentSettings.model,
+            gogAccount: currentSettings.gogAccount || undefined,
+            maxTokens: currentSettings.maxTokens,
+            maxIterations: currentSettings.maxIterations,
+            maxContextChars: currentSettings.maxContextChars,
+            systemPrompt: currentSettings.systemPrompt || undefined,
+          }),
+        });
+
+        if (!response.ok) return;
+        const reader = response.body?.getReader();
+        if (!reader) return;
+
+        const decoder = new TextDecoder();
+        let accText = "";
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "text") accText += event.content || "";
+            } catch { /* skip */ }
+          }
+        }
+
+        const assistantMessage: Message = {
+          id: generateId(),
+          role: "assistant",
+          content: accText,
+          timestamp: Date.now(),
+        };
+
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? { ...c, messages: [...c.messages, assistantMessage], updatedAt: Date.now() }
+              : c,
+          ),
+        );
+      } catch { /* silently fail */ }
+    },
+    [],
+  );
 
   const handleSendMessage = useCallback(
     async (content: string) => {
@@ -286,7 +464,6 @@ export default function Home() {
         timestamp: Date.now(),
       };
 
-      // Set title from first message
       updateConversation(convId, (conv) => ({
         ...conv,
         title: conv.title || content.slice(0, 60),
@@ -294,12 +471,8 @@ export default function Home() {
         updatedAt: Date.now(),
       }));
 
-      // Prepare conversation history for API
       const currentConv = conversations.find((c) => c.id === convId);
-      const allMessages = [
-        ...(currentConv?.messages || []),
-        userMessage,
-      ];
+      const allMessages = [...(currentConv?.messages || []), userMessage];
       const apiMessages = allMessages.map((m) => ({
         role: m.role,
         content: m.content,
@@ -372,13 +545,10 @@ export default function Home() {
                 case "done":
                   break;
               }
-            } catch {
-              // skip malformed events
-            }
+            } catch { /* skip */ }
           }
         }
 
-        // Build assistant message from accumulated content
         const toolExecs: ToolExecution[] = accToolCalls
           .filter((tc) => tc.type === "tool_result")
           .map((tc) => ({
@@ -468,13 +638,6 @@ export default function Home() {
     [updateConversation],
   );
 
-  const handleServiceClick = useCallback(
-    (serviceKey: string) => {
-      setActiveService(serviceKey);
-    },
-    [],
-  );
-
   const handleRenameConversation = useCallback(
     (id: string, title: string) => {
       updateConversation(id, (conv) => ({
@@ -501,41 +664,97 @@ export default function Home() {
     abortRef.current?.abort();
   }, []);
 
+  // --- Routine: run now ---
+  const handleRunRoutineNow = useCallback(
+    (instruction: string) => {
+      const id = createConversation();
+      setActiveConvId(id);
+      setTimeout(() => handleSendMessage(instruction), 100);
+    },
+    [createConversation, handleSendMessage],
+  );
+
+  // --- Sidebar nav: scroll to dashboard section ---
+  const handleScrollToSection = useCallback(
+    (section: string) => {
+      if (activeConvId) {
+        setActiveConvId(null);
+      }
+      setTimeout(() => {
+        setScrollToSection(section);
+      }, 50);
+    },
+    [activeConvId],
+  );
+
+  const followUpCount = followUps.filter((f) => f.status === "pending").length;
+  const draftCount = 0;
+
+  const showDashboard = !activeConvId;
+
   return (
     <div className="h-screen flex overflow-hidden">
       <Sidebar
         conversations={conversations}
         activeId={activeConvId}
-        onSelect={setActiveConvId}
-        onNew={() => {
-          const id = createConversation();
+        onSelect={(id) => {
           setActiveConvId(id);
+        }}
+        onNew={() => {
+          createConversation();
         }}
         onRestore={handleRestoreConversation}
         onOpenSettings={() => setSettingsOpen(true)}
-        onServiceClick={handleServiceClick}
+        onServiceClick={(key) => setActiveService(key)}
+        onScrollToSection={handleScrollToSection}
+        onUnifiedSearch={(query) => {
+          setUnifiedSearchQuery(query);
+          setUnifiedSearchOpen(true);
+        }}
         theme={theme}
         onToggleTheme={toggleTheme}
         syncStatus={syncStatus}
+        followUpCount={followUpCount}
+        draftCount={draftCount}
       />
 
-      <ChatInterface
-        messages={activeConversation?.messages || []}
-        conversation={activeConversation || null}
-        onSendMessage={handleSendMessage}
-        onRename={(title) => activeConvId && handleRenameConversation(activeConvId, title)}
-        onToggleStar={() => activeConvId && handleToggleStar(activeConvId)}
-        onArchive={() => activeConvId && handleArchiveConversation(activeConvId)}
-        settings={settings}
-        isStreaming={isStreaming}
-        streamContent={streamContent}
-        streamToolCalls={streamToolCalls}
-        onStopStreaming={handleStopStreaming}
-        onOpenSettings={() => setSettingsOpen(true)}
-        gogInstalled={gogStatus?.installed ?? false}
-        inputValue={inputValue}
-        onInputChange={setInputValue}
-      />
+      {showDashboard ? (
+        <DashboardView
+          settings={settings}
+          followUps={followUps}
+          onFollowUpsUpdate={setFollowUps}
+          routines={routines}
+          onRoutinesUpdate={setRoutines}
+          onRunRoutineNow={handleRunRoutineNow}
+          emailStyle={emailStyle}
+          onStyleUpdate={setEmailStyle}
+          onBriefingItemClick={(text) => {
+            const id = createConversation();
+            setActiveConvId(id);
+            setInputValue(text);
+          }}
+          scrollToSection={scrollToSection}
+          onScrollHandled={() => setScrollToSection(null)}
+        />
+      ) : (
+        <ChatInterface
+          messages={activeConversation?.messages || []}
+          conversation={activeConversation || null}
+          onSendMessage={handleSendMessage}
+          onRename={(title) => activeConvId && handleRenameConversation(activeConvId, title)}
+          onToggleStar={() => activeConvId && handleToggleStar(activeConvId)}
+          onArchive={() => activeConvId && handleArchiveConversation(activeConvId)}
+          settings={settings}
+          isStreaming={isStreaming}
+          streamContent={streamContent}
+          streamToolCalls={streamToolCalls}
+          onStopStreaming={handleStopStreaming}
+          onOpenSettings={() => setSettingsOpen(true)}
+          gogInstalled={gogStatus?.installed ?? false}
+          inputValue={inputValue}
+          onInputChange={setInputValue}
+        />
+      )}
 
       <SettingsPanel
         open={settingsOpen}
@@ -562,6 +781,18 @@ export default function Home() {
           setActiveConvId(id);
           setInputValue(draft);
           setActiveService(null);
+        }}
+      />
+
+      <UnifiedSearchPanel
+        open={unifiedSearchOpen}
+        initialQuery={unifiedSearchQuery}
+        onClose={() => setUnifiedSearchOpen(false)}
+        onSelectItem={(draft) => {
+          const id = createConversation();
+          setActiveConvId(id);
+          setInputValue(draft);
+          setUnifiedSearchOpen(false);
         }}
       />
     </div>

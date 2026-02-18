@@ -118,7 +118,6 @@ export default function ChatInterface({
     resizeTextarea(e.target);
   };
 
-  // Re-measure height when inputValue changes externally (e.g. service panel draft)
   useEffect(() => {
     if (inputRef.current) resizeTextarea(inputRef.current);
   }, [inputValue]);
