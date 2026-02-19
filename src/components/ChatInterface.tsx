@@ -13,6 +13,7 @@ import {
   Archive,
   Check,
   X,
+  RefreshCw,
 } from "lucide-react";
 import MessageBubble from "./MessageBubble";
 import type { Message, Settings as SettingsType, Conversation } from "@/lib/types";
@@ -140,12 +141,69 @@ export default function ChatInterface({
 
   const hasApiKey = !!settings.apiKey;
 
-  const SUGGESTIONS = [
+  const FALLBACK_SUGGESTIONS = [
+    "Analyze my recent spreadsheets for patterns and suggest improvements",
+    "Cross-reference my emails, calendar, and docs to find action items I've missed",
     "Show me my unread emails from today",
     "What events do I have this week?",
-    "List my recent Google Drive files",
-    "Show my task lists",
   ];
+
+  const SUGGESTIONS_CACHE_KEY = "gog-suggestions-cache";
+  const SUGGESTIONS_TTL = 12 * 60 * 60 * 1000;
+
+  const readCache = useCallback((): string[] | null => {
+    try {
+      const raw = localStorage.getItem(SUGGESTIONS_CACHE_KEY);
+      if (!raw) return null;
+      const { suggestions, ts } = JSON.parse(raw) as { suggestions: string[]; ts: number };
+      if (Date.now() - ts > SUGGESTIONS_TTL) return null;
+      return suggestions;
+    } catch { return null; }
+  }, [SUGGESTIONS_CACHE_KEY, SUGGESTIONS_TTL]);
+
+  const writeCache = useCallback((suggestions: string[]) => {
+    try {
+      localStorage.setItem(SUGGESTIONS_CACHE_KEY, JSON.stringify({ suggestions, ts: Date.now() }));
+    } catch { /* quota exceeded, ignore */ }
+  }, [SUGGESTIONS_CACHE_KEY]);
+
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[] | null>(() => readCache());
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const suggestionsRequested = useRef(false);
+
+  const fetchSuggestions = useCallback(async (bypassCache = false) => {
+    if (!hasApiKey) return;
+    if (!bypassCache) {
+      const cached = readCache();
+      if (cached) { setDynamicSuggestions(cached); return; }
+    }
+    setSuggestionsLoading(true);
+    try {
+      const res = await fetch("/api/suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.model }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.suggestions) && data.suggestions.length >= 4) {
+          const s = data.suggestions.slice(0, 4);
+          setDynamicSuggestions(s);
+          writeCache(s);
+        }
+      }
+    } catch { /* fall through to fallback */ }
+    setSuggestionsLoading(false);
+  }, [hasApiKey, settings.apiKey, settings.model, readCache, writeCache]);
+
+  useEffect(() => {
+    if (hasApiKey && messages.length === 0 && !suggestionsRequested.current) {
+      suggestionsRequested.current = true;
+      fetchSuggestions();
+    }
+  }, [hasApiKey, messages.length, fetchSuggestions]);
+
+  const suggestions = dynamicSuggestions || FALLBACK_SUGGESTIONS;
 
   return (
     <div className="flex-1 flex flex-col h-full relative">
@@ -288,19 +346,42 @@ export default function ChatInterface({
               Contacts using natural language.
             </p>
             <div className="grid grid-cols-2 gap-2 w-full">
-              {SUGGESTIONS.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => {
-                    if (!isStreaming && hasApiKey) onSendMessage(s);
-                  }}
-                  disabled={!hasApiKey}
-                  className="text-left px-3.5 py-3 rounded-xl border border-border hover:border-accent/30 hover:bg-accent/5 transition-all text-xs text-text-secondary hover:text-text disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {s}
-                </button>
-              ))}
+              {suggestionsLoading
+                ? Array.from({ length: 4 }).map((_, i) => (
+                    <div
+                      key={i}
+                      className="px-3.5 py-3 rounded-xl border border-border bg-bg-tertiary/30 animate-pulse"
+                    >
+                      <div className="h-3 bg-border/40 rounded w-3/4 mb-1.5" />
+                      <div className="h-3 bg-border/30 rounded w-1/2" />
+                    </div>
+                  ))
+                : suggestions.map((s, i) => (
+                    <button
+                      key={`${s}-${i}`}
+                      onClick={() => {
+                        if (!isStreaming && hasApiKey) onSendMessage(s);
+                      }}
+                      disabled={!hasApiKey}
+                      className="text-left px-3.5 py-3 rounded-xl border border-border hover:border-accent/30 hover:bg-accent/5 transition-all text-xs text-text-secondary hover:text-text disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {s}
+                    </button>
+                  ))}
             </div>
+            {hasApiKey && !suggestionsLoading && (
+              <button
+                onClick={() => {
+                  setDynamicSuggestions(null);
+                  suggestionsRequested.current = false;
+                  fetchSuggestions(true);
+                }}
+                className="mt-3 flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text-secondary transition-colors"
+              >
+                <RefreshCw size={11} />
+                Refresh suggestions
+              </button>
+            )}
           </div>
         )}
 

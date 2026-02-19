@@ -11,6 +11,10 @@ Runs on your machine. Your credentials and API keys never leave your computer. B
 </p>
 <p align="center"><em>The dashboard — your inbox, calendar, recent files, follow-ups, drafts, and routines in one view.</em></p>
 
+### 🔗 [Live Demo](https://gog-chat-site.onrender.com/)
+
+> Try a quasi-live version of Gog Chat at **[gog-chat-site.onrender.com](https://gog-chat-site.onrender.com/)** — no setup required.
+
 ---
 
 ## What It Does
