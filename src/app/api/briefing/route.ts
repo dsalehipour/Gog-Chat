@@ -12,6 +12,8 @@ interface BriefingItem {
   endTime?: string;
   from?: string;
   threadId?: string;
+  isUnread?: boolean;
+  date?: string;
 }
 
 interface BriefingSection {
@@ -19,8 +21,17 @@ interface BriefingSection {
   items: BriefingItem[];
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url);
+  const dateParam = searchParams.get("date");
   const account = await getDefaultAccount();
+
+  const calArgs = ["calendar", "events", "--max", "10", "--json"];
+  if (dateParam) {
+    calArgs.push("--from", dateParam, "--to", dateParam);
+  } else {
+    calArgs.push("--today");
+  }
 
   const [emailsResult, calendarResult, driveResult] =
     await Promise.allSettled([
@@ -28,7 +39,7 @@ export async function GET() {
         ["gmail", "search", "in:inbox", "--max", "10", "--json"],
         account,
       ),
-      runGogCommand(["calendar", "events", "--max", "10", "--json"], account),
+      runGogCommand(calArgs, account),
       runGogCommand(
         [
           "drive",
@@ -52,13 +63,15 @@ export async function GET() {
       sections.push({
         title: "Inbox",
         items: threads.map(
-          (t: Record<string, string>) => ({
-            id: t.id,
-            threadId: t.threadId || t.id,
-            text: t.subject || "(no subject)",
-            detail: t.from?.replace(/<[^>]+>/g, "").replace(/"/g, "").trim(),
-            from: t.from,
+          (t: Record<string, string | string[]>) => ({
+            id: t.id as string,
+            threadId: (t.threadId || t.id) as string,
+            text: (t.subject as string) || "(no subject)",
+            detail: (t.from as string)?.replace(/"/g, "").trim(),
+            from: t.from as string,
             url: `https://mail.google.com/mail/u/0/#inbox/${t.threadId || t.id}`,
+            isUnread: Array.isArray(t.labels) && t.labels.includes("UNREAD"),
+            date: t.date as string,
           }),
         ),
       });
@@ -143,9 +156,9 @@ export async function GET() {
 export async function POST(request: Request) {
   const body = await request.json();
   const { action, threadId } = body as { action: string; threadId: string };
+  const account = await getDefaultAccount();
 
   if (action === "archive" && threadId) {
-    const account = await getDefaultAccount();
     const result = await runGogCommand(
       ["gmail", "thread", "modify", threadId, "--remove", "INBOX"],
       account,
@@ -154,6 +167,28 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true });
     }
     return NextResponse.json({ error: result.stderr || "Failed to archive" }, { status: 500 });
+  }
+
+  if (action === "snooze" && threadId) {
+    const result = await runGogCommand(
+      ["gmail", "thread", "modify", threadId, "--remove", "INBOX"],
+      account,
+    );
+    if (result.success) {
+      return NextResponse.json({ success: true });
+    }
+    return NextResponse.json({ error: result.stderr || "Failed to snooze" }, { status: 500 });
+  }
+
+  if (action === "unsnooze" && threadId) {
+    const result = await runGogCommand(
+      ["gmail", "thread", "modify", threadId, "--add", "INBOX"],
+      account,
+    );
+    if (result.success) {
+      return NextResponse.json({ success: true });
+    }
+    return NextResponse.json({ error: result.stderr || "Failed to unsnooze" }, { status: 500 });
   }
 
   return NextResponse.json({ error: "Invalid action" }, { status: 400 });

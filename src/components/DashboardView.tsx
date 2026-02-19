@@ -28,6 +28,7 @@ import {
   Pause,
   Archive,
   ChevronDown,
+  AlarmClock,
 } from "lucide-react";
 import type { FollowUp, Routine, RoutineSchedule, EmailStyleProfile, Settings } from "@/lib/types";
 import { getNextRunTime } from "@/lib/scheduler";
@@ -43,6 +44,8 @@ interface BriefingItem {
   endTime?: string;
   from?: string;
   threadId?: string;
+  isUnread?: boolean;
+  date?: string;
 }
 
 interface BriefingSection {
@@ -110,6 +113,18 @@ function timeAgo(ts: number): string {
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatEmailDate(dateStr?: string): string {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr.replace(" ", "T"));
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) return d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+    if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch { return ""; }
 }
 
 function formatDuration(startTime?: string, endTime?: string): string {
@@ -211,6 +226,14 @@ export default function DashboardView({
   const [briefingLoading, setBriefingLoading] = useState(false);
   const [briefingTimestamp, setBriefingTimestamp] = useState<number | null>(null);
   const briefingLoadedRef = useRef(false);
+  const [, setTick] = useState(0);
+  const [calDayOffset, setCalDayOffset] = useState(0);
+  const [calLoading, setCalLoading] = useState(false);
+  const [snoozeOpenId, setSnoozeOpenId] = useState<string | null>(null);
+  const [snoozeCustom, setSnoozeCustom] = useState(false);
+  const [snoozeDate, setSnoozeDate] = useState("");
+  const [snoozeTime, setSnoozeTime] = useState("08:00");
+  const snoozeRef = useRef<HTMLDivElement>(null);
 
   // ── Recap state ──
   const [recapPreset, setRecapPreset] = useState<RangePreset>("this-week");
@@ -296,6 +319,63 @@ export default function DashboardView({
     }
   }, [fetchBriefing]);
 
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const mins = settings.briefingRefreshMinutes ?? 60;
+    if (mins <= 0) return;
+    const id = setInterval(() => fetchBriefing(true), mins * 60_000);
+    return () => clearInterval(id);
+  }, [settings.briefingRefreshMinutes, fetchBriefing]);
+
+  const hiddenAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    const handler = () => {
+      if (document.hidden) {
+        hiddenAtRef.current = Date.now();
+      } else {
+        const staleMins = settings.briefingStaleMinutes ?? 2;
+        if (staleMins > 0 && hiddenAtRef.current && Date.now() - hiddenAtRef.current >= staleMins * 60_000) {
+          fetchBriefing(true);
+        }
+        hiddenAtRef.current = null;
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [settings.briefingStaleMinutes, fetchBriefing]);
+
+  const fetchCalendarDay = useCallback(async (offset: number) => {
+    setCalLoading(true);
+    try {
+      const url = offset === 0
+        ? "/api/briefing"
+        : `/api/briefing?date=${(() => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().split("T")[0]; })()}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const calSection = (data.sections as BriefingSection[])?.find((s) => s.title === "Today's Events");
+        if (calSection) {
+          setBriefingSections((prev) => prev.map((s) => (s.title === "Today's Events" ? calSection : s)));
+        }
+      }
+    } catch { /* ignore */ }
+    finally { setCalLoading(false); }
+  }, []);
+
+  const prevCalOffset = useRef(0);
+  useEffect(() => {
+    if (calDayOffset !== 0) {
+      fetchCalendarDay(calDayOffset);
+    } else if (prevCalOffset.current !== 0) {
+      fetchCalendarDay(0);
+    }
+    prevCalOffset.current = calDayOffset;
+  }, [calDayOffset, fetchCalendarDay]);
+
   const archiveEmail = async (threadId: string) => {
     try {
       await fetch("/api/briefing", {
@@ -312,6 +392,90 @@ export default function DashboardView({
       );
     } catch { /* ignore */ }
   };
+
+  function getSnoozeOptions(): { label: string; time: number }[] {
+    const now = new Date();
+    const later = new Date(now);
+    later.setHours(later.getHours() + 3);
+    const tomorrow8am = new Date(now);
+    tomorrow8am.setDate(tomorrow8am.getDate() + 1);
+    tomorrow8am.setHours(8, 0, 0, 0);
+    const nextMon = new Date(now);
+    nextMon.setDate(nextMon.getDate() + ((8 - nextMon.getDay()) % 7 || 7));
+    nextMon.setHours(8, 0, 0, 0);
+
+    const opts: { label: string; time: number }[] = [];
+    if (later.getDate() === now.getDate()) {
+      opts.push({ label: `Later today · ${later.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`, time: later.getTime() });
+    }
+    opts.push({ label: `Tomorrow · ${tomorrow8am.toLocaleDateString("en-US", { weekday: "short" })} 8:00 AM`, time: tomorrow8am.getTime() });
+    if (nextMon.getTime() > tomorrow8am.getTime() + 86400000) {
+      opts.push({ label: `Next week · Mon 8:00 AM`, time: nextMon.getTime() });
+    }
+    return opts;
+  }
+
+  const snoozeEmail = async (threadId: string, wakeAt: number, subject: string) => {
+    setSnoozeOpenId(null);
+    try {
+      const res = await fetch("/api/briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "snooze", threadId }),
+      });
+      if (res.ok) {
+        const snoozed = JSON.parse(localStorage.getItem("gc_snoozed_emails") || "[]");
+        snoozed.push({ threadId, wakeAt, subject, snoozedAt: Date.now() });
+        localStorage.setItem("gc_snoozed_emails", JSON.stringify(snoozed));
+        setBriefingSections((prev) =>
+          prev.map((s) =>
+            s.title === "Inbox"
+              ? { ...s, items: s.items.filter((i) => (i.threadId || i.id) !== threadId) }
+              : s,
+          ),
+        );
+      }
+    } catch { /* ignore */ }
+  };
+
+  // Check for snoozed emails that need to come back
+  useEffect(() => {
+    const checkSnoozes = async () => {
+      try {
+        const snoozed = JSON.parse(localStorage.getItem("gc_snoozed_emails") || "[]") as { threadId: string; wakeAt: number; subject: string }[];
+        const now = Date.now();
+        const due = snoozed.filter((s) => s.wakeAt <= now);
+        if (due.length === 0) return;
+        const remaining = snoozed.filter((s) => s.wakeAt > now);
+        for (const item of due) {
+          try {
+            await fetch("/api/briefing", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ action: "unsnooze", threadId: item.threadId }),
+            });
+          } catch { /* ignore */ }
+        }
+        localStorage.setItem("gc_snoozed_emails", JSON.stringify(remaining));
+        if (due.length > 0) fetchBriefing(true);
+      } catch { /* ignore */ }
+    };
+    checkSnoozes();
+    const interval = setInterval(checkSnoozes, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchBriefing]);
+
+  // Close snooze dropdown on outside click
+  useEffect(() => {
+    if (!snoozeOpenId) return;
+    const handler = (e: MouseEvent) => {
+      if (snoozeRef.current && !snoozeRef.current.contains(e.target as Node)) {
+        setSnoozeOpenId(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [snoozeOpenId]);
 
   // ── Recap ──
   function getRecapRange(): { start: string; end: string; label: string } {
@@ -643,12 +807,13 @@ export default function DashboardView({
               </p>
             </div>
             <button
-              onClick={() => fetchBriefing(true)}
-              disabled={briefingLoading}
-              className="ml-auto p-2 rounded-lg hover:bg-accent/10 transition-all text-text-muted hover:text-accent cursor-pointer disabled:opacity-40"
-              title="Refresh briefing"
+              onClick={() => { fetchBriefing(true); scanForFollowUps(); fetchDraftEmails(); }}
+              disabled={briefingLoading || followUpScanning || draftsLoading}
+              className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-accent/10 transition-all text-text-muted hover:text-accent cursor-pointer disabled:opacity-40"
+              title="Refresh all sections"
             >
-              <RefreshCw size={16} className={briefingLoading ? "animate-refresh" : ""} />
+              <RefreshCw size={14} className={briefingLoading || followUpScanning || draftsLoading ? "animate-refresh" : ""} />
+              <span className="text-[10px] font-medium">Refresh all</span>
             </button>
           </div>
 
@@ -679,73 +844,255 @@ export default function DashboardView({
                   <p className="text-xs text-text-muted">All caught up</p>
                 ) : (
                   <ul className="space-y-1">
-                    {emailSection.items.slice(0, 8).map((item) => (
-                      <li key={item.id} className="group">
-                        <a
-                          href={item.url || `https://mail.google.com/mail/u/0/#inbox/${item.threadId || item.id}`}
-                          target="_blank"
-                          rel="noopener"
-                          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer"
-                        >
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs text-text truncate">{item.text}</p>
-                            {item.detail && <p className="text-[10px] text-text-muted truncate">{item.detail}</p>}
-                          </div>
-                          <button
-                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); archiveEmail(item.threadId || item.id); }}
-                            className="shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
-                            title="Archive"
+                    {emailSection.items.slice(0, 8).map((item) => {
+                      const tid = item.threadId || item.id;
+                      return (
+                        <li key={item.id} className="group relative">
+                          <a
+                            href={item.url || `https://mail.google.com/mail/u/0/#inbox/${tid}`}
+                            target="_blank"
+                            rel="noopener"
+                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${
+                              item.isUnread
+                                ? "bg-bg-secondary/80"
+                                : ""
+                            }`}
                           >
-                            <Archive size={12} />
-                          </button>
-                        </a>
-                      </li>
-                    ))}
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-xs ${item.isUnread ? "text-text font-semibold" : "text-text-secondary"}`}>{item.text}</p>
+                              {item.detail && (() => {
+                                const match = item.detail.match(/^(.+?)\s*<([^>]+)>$/);
+                                const name = match ? match[1].trim() : item.detail;
+                                const email = match ? match[2] : null;
+                                return (
+                                  <p className="text-[11px] truncate">
+                                    <span className={item.isUnread ? "text-text-secondary font-medium" : "text-text-muted"}>{name}</span>
+                                    {email && <span className="text-text-muted/50 text-[10px]"> {email}</span>}
+                                  </p>
+                                );
+                              })()}
+                            </div>
+                            {item.date && (
+                              <span className={`shrink-0 text-[10px] tabular-nums ${item.isUnread ? "text-text-secondary font-medium" : "text-text-muted/60"}`}>
+                                {formatEmailDate(item.date)}
+                              </span>
+                            )}
+                            <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSnoozeCustom(false); setSnoozeOpenId(snoozeOpenId === tid ? null : tid); }}
+                                className="p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
+                                title="Snooze"
+                              >
+                                <AlarmClock size={12} />
+                              </button>
+                              <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); archiveEmail(tid); }}
+                                className="p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
+                                title="Archive"
+                              >
+                                <Archive size={12} />
+                              </button>
+                            </div>
+                          </a>
+                          {snoozeOpenId === tid && (
+                            <div
+                              ref={snoozeRef}
+                              className="absolute right-2 top-full mt-1 z-50 bg-bg-secondary border border-border rounded-xl shadow-xl py-1 min-w-[220px]"
+                            >
+                              <p className="px-3 py-1.5 text-[10px] font-medium text-text-muted uppercase tracking-wider">Snooze until</p>
+                              {getSnoozeOptions().map((opt) => (
+                                <button
+                                  key={opt.time}
+                                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); snoozeEmail(tid, opt.time, item.text); }}
+                                  className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-bg-hover transition-colors cursor-pointer flex items-center gap-2"
+                                >
+                                  <AlarmClock size={11} className="text-text-muted shrink-0" />
+                                  {opt.label}
+                                </button>
+                              ))}
+                              <div className="border-t border-border mt-1 pt-1">
+                                {!snoozeCustom ? (
+                                  <button
+                                    onClick={(e) => {
+                                      e.preventDefault(); e.stopPropagation();
+                                      const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1);
+                                      setSnoozeDate(tmrw.toISOString().split("T")[0]);
+                                      setSnoozeTime("08:00");
+                                      setSnoozeCustom(true);
+                                    }}
+                                    className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-bg-hover transition-colors cursor-pointer flex items-center gap-2"
+                                  >
+                                    <Calendar size={11} className="text-text-muted shrink-0" />
+                                    Pick date &amp; time
+                                  </button>
+                                ) : (
+                                  <div className="px-3 py-2 space-y-2" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                                    <div className="flex gap-1.5">
+                                      <input
+                                        type="date"
+                                        value={snoozeDate}
+                                        onChange={(e) => setSnoozeDate(e.target.value)}
+                                        min={new Date().toISOString().split("T")[0]}
+                                        className="flex-1 bg-bg-tertiary border border-border rounded-lg px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+                                      />
+                                      <input
+                                        type="time"
+                                        value={snoozeTime}
+                                        onChange={(e) => setSnoozeTime(e.target.value)}
+                                        className="w-[90px] bg-bg-tertiary border border-border rounded-lg px-2 py-1 text-xs text-text focus:outline-none focus:border-accent"
+                                      />
+                                    </div>
+                                    <button
+                                      onClick={() => {
+                                        if (!snoozeDate) return;
+                                        const wakeAt = new Date(`${snoozeDate}T${snoozeTime || "08:00"}`).getTime();
+                                        if (wakeAt > Date.now()) snoozeEmail(tid, wakeAt, item.text);
+                                      }}
+                                      disabled={!snoozeDate}
+                                      className="w-full px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium cursor-pointer disabled:opacity-40 hover:bg-accent/90 transition-colors"
+                                    >
+                                      Snooze
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
 
-              {/* Today's Events */}
+              {/* Calendar Events */}
               <div className="rounded-xl border border-border bg-bg-secondary/50 p-4 space-y-2">
                 <div className="flex items-center gap-2 mb-2">
                   <Calendar size={15} className="text-google-blue" />
-                  <h3 className="text-sm font-medium">
+                  <h3 className="text-sm font-medium flex items-center gap-1.5">
                     <a href="https://calendar.google.com" target="_blank" rel="noopener" className="hover:text-accent transition-colors inline-flex items-center gap-1">
-                      Today&apos;s Events
+                      {(() => {
+                        const d = new Date(); d.setDate(d.getDate() + calDayOffset);
+                        if (calDayOffset === 0) return "Today";
+                        if (calDayOffset === 1) return "Tomorrow";
+                        if (calDayOffset === -1) return "Yesterday";
+                        return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+                      })()}
                       <ExternalLink size={10} className="opacity-50" />
                     </a>
                     {(calendarSection?.items.length ?? 0) > 0 && (
-                      <span className="text-text-muted font-normal ml-1.5">({calendarSection!.items.length})</span>
+                      <span className="text-text-muted font-normal">({calendarSection!.items.length})</span>
                     )}
                   </h3>
-                  {briefingTimestamp && <span className="ml-auto text-[10px] text-text-muted opacity-50">{timeAgo(briefingTimestamp)}</span>}
+                  <div className="ml-auto flex items-center gap-1">
+                    <button
+                      onClick={() => setCalDayOffset((o) => o - 1)}
+                      disabled={calLoading}
+                      className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text cursor-pointer disabled:opacity-40 transition-colors"
+                      title="Previous day"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    {calDayOffset !== 0 && (
+                      <button
+                        onClick={() => setCalDayOffset(0)}
+                        disabled={calLoading}
+                        className="px-1.5 py-0.5 rounded text-[10px] font-medium text-accent hover:bg-accent/10 cursor-pointer disabled:opacity-40 transition-colors"
+                      >
+                        Today
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setCalDayOffset((o) => o + 1)}
+                      disabled={calLoading}
+                      className="p-1 rounded hover:bg-bg-hover text-text-muted hover:text-text cursor-pointer disabled:opacity-40 transition-colors"
+                      title="Next day"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
                 </div>
-                {!calendarSection || calendarSection.items.length === 0 ? (
-                  <p className="text-xs text-text-muted">No events today</p>
+                {calLoading ? (
+                  <div className="flex items-center gap-2 text-text-muted text-xs py-4 justify-center">
+                    <Loader2 size={14} className="animate-spin" /> Loading...
+                  </div>
+                ) : !calendarSection || calendarSection.items.length === 0 ? (
+                  <p className="text-xs text-text-muted">No events {calDayOffset === 0 ? "today" : "this day"}</p>
                 ) : (
                   <ul className="space-y-1">
-                    {calendarSection.items.slice(0, 8).map((item) => {
-                      const dur = formatDuration(item.startTime, item.endTime);
-                      return (
-                        <li key={item.id} className="group">
-                          <a
-                            href={item.url || "https://calendar.google.com"}
-                            target="_blank"
-                            rel="noopener"
-                            className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer"
-                          >
-                            <div className="flex-1 min-w-0">
-                              <p className="text-xs text-text truncate">{item.text}</p>
-                              <div className="flex items-center gap-2 mt-0.5">
-                                {item.detail && <span className="text-xs font-semibold text-accent">{item.detail}</span>}
-                                {dur && <span className="text-[11px] font-medium text-text-secondary bg-bg-tertiary px-1.5 py-0.5 rounded">{dur}</span>}
-                              </div>
-                            </div>
-                            <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
-                          </a>
+                    {(() => {
+                      const events = calendarSection.items.slice(0, 8);
+                      const now = Date.now();
+                      const isToday = calDayOffset === 0;
+                      let nowLineRendered = false;
+
+                      const nowLine = (
+                        <li key="now-line" className="flex items-center gap-2 py-0.5">
+                          <div className="w-1.5 h-1.5 rounded-full bg-red-500 shrink-0" />
+                          <div className="flex-1 h-px bg-red-500/70" />
+                          <span className="text-[9px] font-medium text-red-500 shrink-0">
+                            {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                          </span>
                         </li>
                       );
-                    })}
+
+                      const items: React.ReactNode[] = [];
+
+                      events.forEach((item, idx) => {
+                        const eventStart = item.startTime ? new Date(item.startTime).getTime() : 0;
+
+                        if (isToday && !nowLineRendered && eventStart > now) {
+                          items.push(nowLine);
+                          nowLineRendered = true;
+                        }
+
+                        const dur = formatDuration(item.startTime, item.endTime);
+                        let durationMins = 0;
+                        try {
+                          if (item.startTime && item.endTime) {
+                            durationMins = Math.round((new Date(item.endTime).getTime() - new Date(item.startTime).getTime()) / 60000);
+                          }
+                        } catch { /* ignore */ }
+                        const barPct = durationMins > 0 ? Math.min(Math.max(durationMins / 120, 0.15), 1) : 0;
+
+                        items.push(
+                          <li key={item.id} className="group">
+                            <a
+                              href={item.url || "https://calendar.google.com"}
+                              target="_blank"
+                              rel="noopener"
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer"
+                            >
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <p className="text-xs text-text truncate flex-1">{item.text}</p>
+                                  {item.detail && <span className="text-xs font-semibold text-accent shrink-0">{item.detail}</span>}
+                                </div>
+                                {barPct > 0 && (
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <div className="flex-1 h-1.5 bg-bg-tertiary rounded-full overflow-hidden">
+                                      <div
+                                        className="h-full rounded-full bg-google-blue/50"
+                                        style={{ width: `${barPct * 100}%` }}
+                                      />
+                                    </div>
+                                    {dur && <span className="text-[10px] font-medium text-text-secondary shrink-0 w-12 text-right">{dur}</span>}
+                                  </div>
+                                )}
+                              </div>
+                              <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
+                            </a>
+                          </li>
+                        );
+
+                        if (isToday && !nowLineRendered && idx === events.length - 1) {
+                          items.push(nowLine);
+                          nowLineRendered = true;
+                        }
+                      });
+
+                      return items;
+                    })()}
                   </ul>
                 )}
               </div>

@@ -19,6 +19,7 @@ import {
   HardDrive,
   ChevronDown,
   ChevronRight,
+  Clock,
 } from "lucide-react";
 import { DEFAULT_MODELS, DEFAULT_SETTINGS, type Settings } from "@/lib/types";
 
@@ -454,6 +455,43 @@ export default function SettingsPanel({
               {local.driveSyncEnabled
                 ? "Conversations are backed up to a GogChat folder in your Google Drive."
                 : "Drive sync is off. Conversations are only stored locally."}
+            </p>
+          </section>
+
+          {/* Briefing Refresh */}
+          <section className="space-y-3">
+            <label className="text-sm font-medium text-text-secondary flex items-center gap-2">
+              <Clock size={15} />
+              Briefing Refresh
+            </label>
+            <div className="space-y-2.5">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-text-secondary w-28">Background interval</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={480}
+                  value={local.briefingRefreshMinutes ?? 60}
+                  onChange={(e) => setLocal({ ...local, briefingRefreshMinutes: Math.max(0, parseInt(e.target.value) || 0) })}
+                  className="w-20 bg-bg-tertiary border border-border rounded-xl px-3 py-2 text-sm text-center focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all"
+                />
+                <span className="text-xs text-text-muted">min (0 = off)</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-text-secondary w-28">Refresh on tab return</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={60}
+                  value={local.briefingStaleMinutes ?? 2}
+                  onChange={(e) => setLocal({ ...local, briefingStaleMinutes: Math.max(0, parseInt(e.target.value) || 0) })}
+                  className="w-20 bg-bg-tertiary border border-border rounded-xl px-3 py-2 text-sm text-center focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all"
+                />
+                <span className="text-xs text-text-muted">min (0 = off)</span>
+              </div>
+            </div>
+            <p className="text-xs text-text-muted">
+              Background interval auto-refreshes periodically. Tab return refreshes when you come back to the page after being away.
             </p>
           </section>
 

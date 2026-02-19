@@ -82,6 +82,8 @@ export interface Settings {
   maxContextChars: number;
   systemPrompt: string;
   driveSyncEnabled: boolean;
+  briefingRefreshMinutes: number;
+  briefingStaleMinutes: number;
   quickActions: QuickAction[];
 }
 
@@ -111,5 +113,7 @@ export const DEFAULT_SETTINGS: Settings = {
   maxContextChars: 180_000,
   systemPrompt: "",
   driveSyncEnabled: true,
+  briefingRefreshMinutes: 60,
+  briefingStaleMinutes: 2,
   quickActions: DEFAULT_QUICK_ACTIONS,
 };
