@@ -379,22 +379,28 @@ export default function Sidebar({
             </button>
             {showArchived &&
               archived.map((conv) => (
-                <div
+                <button
                   key={conv.id}
-                  className="group flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-sm text-text-muted border border-transparent"
+                  onClick={() => onSelect(conv.id)}
+                  className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-sm text-text-muted border cursor-pointer w-full text-left transition-all ${
+                    activeId === conv.id
+                      ? "bg-bg-tertiary/60 border-border"
+                      : "border-transparent hover:bg-bg-tertiary/30"
+                  }`}
                 >
                   <Archive size={13} className="shrink-0 opacity-30" />
                   <span className="flex-1 truncate text-xs opacity-60">
                     {conv.title || "New conversation"}
                   </span>
-                  <button
-                    onClick={() => onRestore(conv.id)}
+                  <span
+                    onClick={(e) => { e.stopPropagation(); onRestore(conv.id); }}
                     className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-tertiary hover:text-accent transition-all cursor-pointer"
                     title="Restore"
+                    role="button"
                   >
                     <ArchiveRestore size={12} />
-                  </button>
-                </div>
+                  </span>
+                </button>
               ))}
           </>
         )}

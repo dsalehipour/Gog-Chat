@@ -11,6 +11,8 @@ import {
   Star,
   Pencil,
   Archive,
+  ArchiveRestore,
+  Trash2,
   Check,
   X,
   RefreshCw,
@@ -35,6 +37,8 @@ interface Props {
   onRename: (title: string) => void;
   onToggleStar: () => void;
   onArchive: () => void;
+  onDelete?: () => void;
+  onRestore?: () => void;
   settings: SettingsType;
   isStreaming: boolean;
   streamContent: string;
@@ -53,6 +57,8 @@ export default function ChatInterface({
   onRename,
   onToggleStar,
   onArchive,
+  onDelete,
+  onRestore,
   settings,
   isStreaming,
   streamContent,
@@ -67,6 +73,7 @@ export default function ChatInterface({
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [archiveConfirm, setArchiveConfirm] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -264,36 +271,85 @@ export default function ChatInterface({
                 >
                   <Pencil size={14} />
                 </button>
-                {archiveConfirm ? (
-                  <div className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded-lg bg-danger/10 border border-danger/20">
-                    <span className="text-xs text-danger whitespace-nowrap">Archive?</span>
+                {!conversation.archived && (
+                  archiveConfirm ? (
+                    <div className="flex items-center gap-1 ml-1 px-2 py-0.5 rounded-lg bg-danger/10 border border-danger/20">
+                      <span className="text-xs text-danger whitespace-nowrap">Archive?</span>
+                      <button
+                        onClick={confirmArchive}
+                        className="p-0.5 rounded hover:bg-danger/20 text-danger transition-colors cursor-pointer"
+                        title="Confirm archive"
+                      >
+                        <Check size={13} />
+                      </button>
+                      <button
+                        onClick={() => setArchiveConfirm(false)}
+                        className="p-0.5 rounded hover:bg-bg-hover text-text-muted transition-colors cursor-pointer"
+                        title="Cancel"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      onClick={confirmArchive}
-                      className="p-0.5 rounded hover:bg-danger/20 text-danger transition-colors cursor-pointer"
-                      title="Confirm archive"
+                      onClick={() => setArchiveConfirm(true)}
+                      className="p-1.5 rounded-lg hover:bg-bg-hover text-text-muted hover:text-danger transition-colors cursor-pointer"
+                      title="Archive"
                     >
-                      <Check size={13} />
+                      <Archive size={14} />
                     </button>
-                    <button
-                      onClick={() => setArchiveConfirm(false)}
-                      className="p-0.5 rounded hover:bg-bg-hover text-text-muted transition-colors cursor-pointer"
-                      title="Cancel"
-                    >
-                      <X size={13} />
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => setArchiveConfirm(true)}
-                    className="p-1.5 rounded-lg hover:bg-bg-hover text-text-muted hover:text-danger transition-colors cursor-pointer"
-                    title="Archive"
-                  >
-                    <Archive size={14} />
-                  </button>
+                  )
                 )}
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {/* Archived conversation banner */}
+      {conversation?.archived && (
+        <div className="border-b border-border bg-bg-tertiary/50">
+          <div className="flex items-center gap-3 px-6 py-3">
+            <Archive size={16} className="text-text-muted shrink-0" />
+            <p className="text-sm text-text-secondary flex-1">
+              This conversation is archived.
+            </p>
+            {onRestore && (
+              <button
+                onClick={onRestore}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 transition-colors cursor-pointer"
+              >
+                <ArchiveRestore size={12} />
+                Restore
+              </button>
+            )}
+            {onDelete && !deleteConfirm && (
+              <button
+                onClick={() => setDeleteConfirm(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-text-muted text-xs hover:bg-danger/10 hover:text-danger transition-colors cursor-pointer ml-2"
+              >
+                <Trash2 size={12} />
+                Delete
+              </button>
+            )}
+            {onDelete && deleteConfirm && (
+              <div className="flex items-center gap-2 ml-2 px-3 py-1.5 rounded-lg bg-danger/10 border border-danger/20">
+                <span className="text-xs text-danger whitespace-nowrap">Delete permanently?</span>
+                <button
+                  onClick={() => { onDelete(); setDeleteConfirm(false); }}
+                  className="px-2 py-0.5 rounded bg-danger text-white text-xs font-medium hover:bg-red-500 transition-colors cursor-pointer"
+                >
+                  Yes, delete
+                </button>
+                <button
+                  onClick={() => setDeleteConfirm(false)}
+                  className="px-2 py-0.5 rounded bg-bg-tertiary text-text-muted text-xs hover:bg-bg-hover transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -337,7 +393,7 @@ export default function ChatInterface({
       <div className="max-w-4xl mx-auto pl-3 pr-4 sm:pl-4 sm:pr-6 lg:pl-6 lg:pr-10 xl:pl-10 xl:pr-16 space-y-6">
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center h-full text-center max-w-md mx-auto">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-google-blue via-google-red to-google-yellow flex items-center justify-center mb-6 shadow-lg">
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-google-blue via-google-red to-google-yellow flex items-center justify-center mb-4 shadow-lg">
               <Sparkles size={28} className="text-white" />
             </div>
             <h2 className="text-xl font-semibold mb-2">Gog Chat</h2>

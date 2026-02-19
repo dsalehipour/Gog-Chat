@@ -639,6 +639,16 @@ export default function Home() {
     [updateConversation],
   );
 
+  const handleDeleteConversation = useCallback(
+    (id: string) => {
+      setConversations((prev) => prev.filter((c) => c.id !== id));
+      if (activeConvId === id) {
+        setActiveConvId(null);
+      }
+    },
+    [activeConvId],
+  );
+
   const handleRenameConversation = useCallback(
     (id: string, title: string) => {
       updateConversation(id, (conv) => ({
@@ -752,6 +762,8 @@ export default function Home() {
           onRename={(title) => activeConvId && handleRenameConversation(activeConvId, title)}
           onToggleStar={() => activeConvId && handleToggleStar(activeConvId)}
           onArchive={() => activeConvId && handleArchiveConversation(activeConvId)}
+          onDelete={activeConversation?.archived ? () => activeConvId && handleDeleteConversation(activeConvId) : undefined}
+          onRestore={activeConversation?.archived ? () => activeConvId && handleRestoreConversation(activeConvId) : undefined}
           settings={settings}
           isStreaming={isStreaming}
           streamContent={streamContent}
