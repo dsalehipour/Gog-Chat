@@ -24,11 +24,9 @@ import {
   Loader2,
   Check,
   Search,
-  Sunrise,
-  CalendarClock,
-  ListChecks,
-  Timer,
-  PenLine,
+  LayoutDashboard,
+  ArrowBigUp,
+  Command,
 } from "lucide-react";
 import type { Conversation } from "@/lib/types";
 import type { SyncStatus } from "@/app/page";
@@ -42,6 +40,7 @@ interface Props {
   onOpenSettings: () => void;
   onServiceClick: (serviceKey: string) => void;
   onScrollToSection: (section: string) => void;
+  onGoHome: () => void;
   onUnifiedSearch: (query: string) => void;
   theme: "light" | "dark";
   onToggleTheme: () => void;
@@ -60,13 +59,6 @@ const SERVICE_ICONS = [
   { icon: Users, label: "Contacts", color: "text-google-red", key: "contacts" },
 ];
 
-const FEATURE_NAV = [
-  { icon: Sunrise, label: "Briefing", section: "briefing" },
-  { icon: ListChecks, label: "Follow-ups", section: "followups" },
-  { icon: PenLine, label: "Drafts", section: "drafts" },
-  { icon: Timer, label: "Routines", section: "routines" },
-  { icon: CalendarClock, label: "Recap", section: "recap" },
-] as const;
 
 export default function Sidebar({
   conversations,
@@ -77,6 +69,7 @@ export default function Sidebar({
   onOpenSettings,
   onServiceClick,
   onScrollToSection,
+  onGoHome,
   onUnifiedSearch,
   theme,
   onToggleTheme,
@@ -88,7 +81,9 @@ export default function Sidebar({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+  const searchAreaRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const active = conversations.filter((c) => !c.archived);
@@ -96,10 +91,7 @@ export default function Sidebar({
   const starred = active.filter((c) => c.starred);
   const unstarred = active.filter((c) => !c.starred);
 
-  const badgeCounts: Record<string, number> = {
-    followups: followUpCount,
-    drafts: draftCount,
-  };
+  const totalBadge = followUpCount + draftCount;
 
   const searchResults = searchQuery.trim()
     ? active.filter((c) =>
@@ -112,10 +104,32 @@ export default function Sidebar({
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setDropdownOpen(false);
       }
+      if (searchAreaRef.current && !searchAreaRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
     };
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.shiftKey && e.key.toLowerCase() === "o") {
+        e.preventDefault();
+        onNew();
+      } else if (meta && e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        onGoHome();
+      } else if (meta && !e.shiftKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => inputRef.current?.focus(), 120);
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onNew, onGoHome]);
 
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "ArrowDown") {
@@ -159,7 +173,7 @@ export default function Sidebar({
       {/* Header */}
       <div className="p-4 border-b border-border">
         <div
-          className="flex items-center gap-2.5 mb-4 cursor-pointer"
+          className="flex items-center gap-2.5 cursor-pointer"
           onClick={() => onScrollToSection("briefing")}
         >
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-google-blue via-google-red to-google-yellow shadow-sm flex items-center justify-center">
@@ -171,32 +185,99 @@ export default function Sidebar({
           </div>
         </div>
 
-        <button
-          onClick={onNew}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl bg-accent/10 border border-accent/20 text-accent hover:bg-accent/20 hover:border-accent/30 transition-all text-sm font-medium cursor-pointer"
-        >
-          <Plus size={16} />
-          New Chat
-        </button>
       </div>
 
-      {/* Unified Search with conversation dropdown */}
-      <div className="px-4 pt-3 pb-1" ref={searchRef}>
-        <div className="relative">
-          <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => { setSearchQuery(e.target.value); setSelectedIndex(-1); setDropdownOpen(true); }}
-            onKeyDown={handleSearchKeyDown}
-            onFocus={() => { if (searchQuery.trim()) setDropdownOpen(true); }}
-            placeholder="Search everything..."
-            className="w-full bg-bg-tertiary border border-border rounded-lg pl-8 pr-3 py-1.5 text-xs placeholder:text-text-muted focus:outline-none focus:border-accent/40 transition-all"
-          />
+      {/* Nav + Conversations (single scrollable area) */}
+      <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
+        <button
+          onClick={() => { setSearchOpen(false); onNew(); }}
+          className="group w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text hover:bg-bg-hover transition-all cursor-pointer"
+        >
+          <Plus size={14} className="shrink-0 opacity-60" />
+          <span>New Chat</span>
+          <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><Command size={11} /></kbd>
+            <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><ArrowBigUp size={12} /></kbd>
+            <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-[11px] text-text-secondary font-semibold shadow-sm">O</kbd>
+          </span>
+        </button>
+        <button
+          onClick={() => { setSearchOpen(false); onGoHome(); }}
+          className="group w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text hover:bg-bg-hover transition-all cursor-pointer relative"
+        >
+          <LayoutDashboard size={14} className="shrink-0 opacity-60" />
+          <span>Dashboard</span>
+          {totalBadge > 0 ? (
+            <span className="ml-auto text-[10px] bg-accent/15 text-accent px-1.5 py-0.5 rounded-full font-medium">
+              {totalBadge > 9 ? "9+" : totalBadge}
+            </span>
+          ) : (
+            <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><Command size={11} /></kbd>
+              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><ArrowBigUp size={12} /></kbd>
+              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-[11px] text-text-secondary font-semibold shadow-sm">K</kbd>
+            </span>
+          )}
+        </button>
+
+        {/* Search row + expandable panel */}
+        <div ref={searchAreaRef} className="relative">
+          <button
+            onClick={() => {
+              setSearchOpen((o) => !o);
+              setTimeout(() => inputRef.current?.focus(), 120);
+            }}
+            className="group w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text hover:bg-bg-hover transition-all cursor-pointer"
+          >
+            <Search size={14} className="shrink-0 opacity-60" />
+            <span>Search</span>
+            <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><Command size={11} /></kbd>
+              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-[11px] text-text-secondary font-semibold shadow-sm">K</kbd>
+            </span>
+          </button>
+
+          <div
+            className="overflow-hidden transition-all duration-200 ease-in-out"
+            style={{ maxHeight: searchOpen ? "200px" : "0px", opacity: searchOpen ? 1 : 0 }}
+          >
+            <div className="px-1 pt-1.5 pb-1 space-y-2" ref={searchRef}>
+              <div>
+                <div className="relative">
+                  <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-muted" />
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => { setSearchQuery(e.target.value); setSelectedIndex(-1); setDropdownOpen(true); }}
+                    onKeyDown={handleSearchKeyDown}
+                    onFocus={() => { if (searchQuery.trim()) setDropdownOpen(true); }}
+                    placeholder="Search everything..."
+                    className="w-full bg-bg-tertiary border border-border rounded-lg pl-7 pr-3 py-1.5 text-xs placeholder:text-text-muted focus:outline-none focus:border-accent/40 transition-all"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between px-0.5">
+                {SERVICE_ICONS.map(({ icon: Icon, label, color, key }) => (
+                  <div key={key} className="group relative">
+                    <button
+                      onClick={() => onServiceClick(key)}
+                      className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${color}`}
+                    >
+                      <Icon size={14} />
+                    </button>
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 bg-bg-tertiary border border-border rounded-md text-[10px] text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20">
+                      {label}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
 
           {dropdownOpen && searchResults.length > 0 && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-bg-secondary border border-border rounded-lg shadow-xl z-30 max-h-60 overflow-y-auto">
+            <div className="absolute left-1 right-1 bg-bg-secondary border border-border rounded-lg shadow-xl z-50 max-h-60 overflow-y-auto" style={{ top: "calc(100%)" }}>
               {searchResults.slice(0, 10).map((conv, i) => (
                 <button
                   key={conv.id}
@@ -232,44 +313,6 @@ export default function Sidebar({
             </div>
           )}
         </div>
-      </div>
-
-      {/* Service icons strip */}
-      <div className="px-4 py-2 border-b border-border">
-        <div className="flex items-center justify-between">
-          {SERVICE_ICONS.map(({ icon: Icon, label, color, key }) => (
-            <div key={key} className="group relative">
-              <button
-                onClick={() => onServiceClick(key)}
-                className={`p-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${color}`}
-              >
-                <Icon size={14} />
-              </button>
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2 py-0.5 bg-bg-tertiary border border-border rounded-md text-[10px] text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-20">
-                {label}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Feature nav + Conversations (single scrollable area) */}
-      <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
-        {FEATURE_NAV.map(({ icon: Icon, label, section }) => (
-          <button
-            key={section}
-            onClick={() => onScrollToSection(section)}
-            className="w-full flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-xs text-text-secondary hover:text-text hover:bg-bg-hover transition-all cursor-pointer relative"
-          >
-            <Icon size={14} className="shrink-0 opacity-60" />
-            <span>{label}</span>
-            {(badgeCounts[section] ?? 0) > 0 && (
-              <span className="ml-auto text-[10px] bg-accent/15 text-accent px-1.5 py-0.5 rounded-full font-medium">
-                {badgeCounts[section] > 9 ? "9+" : badgeCounts[section]}
-              </span>
-            )}
-          </button>
-        ))}
         {active.length === 0 && archived.length === 0 && (
           <div className="text-center py-8">
             <MessageSquare size={24} className="text-text-muted mx-auto mb-2 opacity-40" />
@@ -285,7 +328,7 @@ export default function Sidebar({
             {starred.map((conv) => (
               <div
                 key={conv.id}
-                onClick={() => onSelect(conv.id)}
+                onClick={() => { setSearchOpen(false); onSelect(conv.id); }}
                 className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl cursor-pointer transition-all text-sm ${
                   conv.id === activeId
                     ? "bg-accent/10 border border-accent/20 text-text"
@@ -310,7 +353,7 @@ export default function Sidebar({
         {unstarred.map((conv) => (
           <div
             key={conv.id}
-            onClick={() => onSelect(conv.id)}
+            onClick={() => { setSearchOpen(false); onSelect(conv.id); }}
             className={`group flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl cursor-pointer transition-all text-sm ${
               conv.id === activeId
                 ? "bg-accent/10 border border-accent/20 text-text"

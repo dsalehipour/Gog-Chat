@@ -96,6 +96,7 @@ interface Props {
   onBriefingItemClick: (text: string) => void;
   scrollToSection?: string | null;
   onScrollHandled?: () => void;
+  scrollToTop?: number;
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -220,7 +221,9 @@ export default function DashboardView({
   onBriefingItemClick,
   scrollToSection,
   onScrollHandled,
+  scrollToTop,
 }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
   // ── Briefing state ──
   const [briefingSections, setBriefingSections] = useState<BriefingSection[]>([]);
   const [briefingLoading, setBriefingLoading] = useState(false);
@@ -281,6 +284,12 @@ export default function DashboardView({
       onScrollHandled?.();
     }
   }, [scrollToSection, onScrollHandled]);
+
+  useEffect(() => {
+    if (scrollToTop && containerRef.current) {
+      containerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [scrollToTop]);
 
   // ── Briefing fetch ──
   const fetchBriefing = useCallback(async (force = false) => {
@@ -790,7 +799,7 @@ export default function DashboardView({
   const driveSection = briefingSections.find((s) => s.title === "Recent Files");
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div ref={containerRef} className="flex-1 overflow-y-auto">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-10 xl:px-16 py-8 space-y-12">
 
         {/* ═══════════ BRIEFING ═══════════ */}

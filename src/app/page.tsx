@@ -100,6 +100,7 @@ export default function Home() {
 
   // Dashboard scroll-to target
   const [scrollToSection, setScrollToSection] = useState<string | null>(null);
+  const [dashScrollTop, setDashScrollTop] = useState(0);
 
   // --- Refs ---
   const abortRef = useRef<AbortController | null>(null);
@@ -707,6 +708,12 @@ export default function Home() {
         onOpenSettings={() => setSettingsOpen(true)}
         onServiceClick={(key) => setActiveService(key)}
         onScrollToSection={handleScrollToSection}
+        onGoHome={() => {
+          if (!activeConvId) {
+            setDashScrollTop((n) => n + 1);
+          }
+          setActiveConvId(null);
+        }}
         onUnifiedSearch={(query) => {
           setUnifiedSearchQuery(query);
           setUnifiedSearchOpen(true);
@@ -735,6 +742,7 @@ export default function Home() {
           }}
           scrollToSection={scrollToSection}
           onScrollHandled={() => setScrollToSection(null)}
+          scrollToTop={dashScrollTop}
         />
       ) : (
         <ChatInterface
