@@ -55,6 +55,20 @@ function saveToStorage<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
+function mergeFollowUpsLocal(local: FollowUp[], remote: FollowUp[]): FollowUp[] {
+  const merged = new Map<string, FollowUp>();
+  for (const fu of local) merged.set(fu.id, fu);
+  for (const fu of remote) {
+    const existing = merged.get(fu.id);
+    if (!existing) {
+      merged.set(fu.id, fu);
+    } else if (fu.updatedAt > existing.updatedAt) {
+      merged.set(fu.id, fu);
+    }
+  }
+  return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
 function mergeLocal(local: Conversation[], remote: Conversation[]): Conversation[] {
   const merged = new Map<string, Conversation>();
   for (const c of local) merged.set(c.id, c);
@@ -105,15 +119,23 @@ export default function Home() {
   // --- Refs ---
   const abortRef = useRef<AbortController | null>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followUpSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadDone = useRef(false);
   const skipNextSync = useRef(false);
+  const skipNextFollowUpSync = useRef(false);
   const conversationsRef = useRef<Conversation[]>([]);
+  const followUpsRef = useRef<FollowUp[]>([]);
+  const followUpDriveFileIdRef = useRef<string | null>(null);
   const routineCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevActiveConvIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  useEffect(() => {
+    followUpsRef.current = followUps;
+  }, [followUps]);
 
   useEffect(() => {
     const prevId = prevActiveConvIdRef.current;
@@ -191,6 +213,40 @@ export default function Home() {
     }, 5000);
   }, [pushToDrive]);
 
+  const pushFollowUpsToDrive = useCallback(async (fus: FollowUp[]) => {
+    if (fus.length === 0 && !followUpDriveFileIdRef.current) return;
+    setSyncStatus("syncing");
+    try {
+      const res = await fetch("/api/followups/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          followUps: fus,
+          driveFileId: followUpDriveFileIdRef.current || undefined,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.driveFileId) followUpDriveFileIdRef.current = data.driveFileId;
+        setSyncStatus("synced");
+        setTimeout(() => setSyncStatus("idle"), 3000);
+      } else {
+        setSyncStatus("error");
+        setTimeout(() => setSyncStatus("idle"), 5000);
+      }
+    } catch {
+      setSyncStatus("error");
+      setTimeout(() => setSyncStatus("idle"), 5000);
+    }
+  }, []);
+
+  const scheduleFollowUpSync = useCallback(() => {
+    if (followUpSyncTimeoutRef.current) clearTimeout(followUpSyncTimeoutRef.current);
+    followUpSyncTimeoutRef.current = setTimeout(() => {
+      pushFollowUpsToDrive(followUpsRef.current);
+    }, 5000);
+  }, [pushFollowUpsToDrive]);
+
   // --- Load persisted state ---
   useEffect(() => {
     const loaded = loadFromStorage<Conversation[]>("gc_conversations", []);
@@ -232,6 +288,24 @@ export default function Home() {
         } catch {
           setSyncStatus("idle");
         }
+
+        // Pull follow-ups from Drive
+        try {
+          const fuRes = await fetch("/api/followups/sync");
+          if (fuRes.ok) {
+            const fuData = await fuRes.json();
+            if (fuData.driveFileId) followUpDriveFileIdRef.current = fuData.driveFileId;
+            if (fuData.followUps && Array.isArray(fuData.followUps) && fuData.followUps.length > 0) {
+              skipNextFollowUpSync.current = true;
+              setFollowUps((prev) => {
+                const merged = mergeFollowUpsLocal(prev, fuData.followUps);
+                saveToStorage("gc_followups", merged);
+                return merged;
+              });
+            }
+          }
+        } catch { /* silent — follow-up sync is non-critical */ }
+
         initialLoadDone.current = true;
       })();
     } else {
@@ -271,7 +345,16 @@ export default function Home() {
 
   useEffect(() => {
     saveToStorage("gc_followups", followUps);
-  }, [followUps]);
+    if (initialLoadDone.current) {
+      if (skipNextFollowUpSync.current) {
+        skipNextFollowUpSync.current = false;
+        return;
+      }
+      if (settings.driveSyncEnabled) {
+        scheduleFollowUpSync();
+      }
+    }
+  }, [followUps, scheduleFollowUpSync, settings.driveSyncEnabled]);
 
   useEffect(() => {
     saveToStorage("gc_routines", routines);
@@ -750,6 +833,7 @@ export default function Home() {
             setActiveConvId(id);
             setInputValue(text);
           }}
+          onOpenConversation={(id) => setActiveConvId(id)}
           scrollToSection={scrollToSection}
           onScrollHandled={() => setScrollToSection(null)}
           scrollToTop={dashScrollTop}

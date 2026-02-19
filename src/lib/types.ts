@@ -35,9 +35,12 @@ export interface FollowUp {
   title: string;
   source: "email" | "calendar" | "task" | "manual" | "conversation";
   sourceUrl?: string;
+  threadId?: string;
   dueDate?: number;
-  status: "pending" | "done" | "snoozed";
+  status: "pending" | "done" | "snoozed" | "dismissed";
   notes?: string;
+  contactName?: string;
+  contactEmail?: string;
   conversationId?: string;
   createdAt: number;
   updatedAt: number;

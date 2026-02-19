@@ -29,11 +29,22 @@ import {
   Archive,
   ChevronDown,
   AlarmClock,
+  Users,
+  X,
+  MessageSquare,
 } from "lucide-react";
 import type { FollowUp, Routine, RoutineSchedule, EmailStyleProfile, Settings } from "@/lib/types";
 import { getNextRunTime } from "@/lib/scheduler";
 
 // ─── Types ──────────────────────────────────────────────────
+
+interface EventAttendee {
+  name: string;
+  email: string;
+  status: string;
+  organizer?: boolean;
+  self?: boolean;
+}
 
 interface BriefingItem {
   id: string;
@@ -46,6 +57,8 @@ interface BriefingItem {
   threadId?: string;
   isUnread?: boolean;
   date?: string;
+  organizer?: { name: string; email: string };
+  attendees?: EventAttendee[];
 }
 
 interface BriefingSection {
@@ -72,10 +85,13 @@ interface DraftState {
 }
 
 interface FollowUpSuggestion {
+  threadId?: string;
+  conversationId?: string;
   title: string;
   source: string;
   contactName?: string;
   contactEmail?: string;
+  recipientRaw?: string;
   company?: string;
   lastAction?: string;
   dueDate: string | null;
@@ -94,6 +110,7 @@ interface Props {
   emailStyle: EmailStyleProfile | null;
   onStyleUpdate: (profile: EmailStyleProfile) => void;
   onBriefingItemClick: (text: string) => void;
+  onOpenConversation?: (id: string) => void;
   scrollToSection?: string | null;
   onScrollHandled?: () => void;
   scrollToTop?: number;
@@ -219,6 +236,7 @@ export default function DashboardView({
   emailStyle,
   onStyleUpdate,
   onBriefingItemClick,
+  onOpenConversation,
   scrollToSection,
   onScrollHandled,
   scrollToTop,
@@ -232,6 +250,7 @@ export default function DashboardView({
   const [, setTick] = useState(0);
   const [calDayOffset, setCalDayOffset] = useState(0);
   const [calLoading, setCalLoading] = useState(false);
+  const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
   const [snoozeOpenId, setSnoozeOpenId] = useState<string | null>(null);
   const [snoozeCustom, setSnoozeCustom] = useState(false);
   const [snoozeDate, setSnoozeDate] = useState("");
@@ -252,6 +271,7 @@ export default function DashboardView({
   // ── Follow-ups state ──
   const [followUpScanning, setFollowUpScanning] = useState(false);
   const followUpAutoScannedRef = useRef(false);
+  const [refreshAllLoading, setRefreshAllLoading] = useState(false);
 
   // ── Drafts state ──
   const [draftEmails, setDraftEmails] = useState<DraftEmail[]>([]);
@@ -340,17 +360,18 @@ export default function DashboardView({
     return () => clearInterval(id);
   }, [settings.briefingRefreshMinutes, fetchBriefing]);
 
-  const hiddenAtRef = useRef<number | null>(null);
+  const briefingTimestampRef = useRef<number | null>(null);
+  useEffect(() => {
+    briefingTimestampRef.current = briefingTimestamp;
+  }, [briefingTimestamp]);
+
   useEffect(() => {
     const handler = () => {
-      if (document.hidden) {
-        hiddenAtRef.current = Date.now();
-      } else {
-        const staleMins = settings.briefingStaleMinutes ?? 2;
-        if (staleMins > 0 && hiddenAtRef.current && Date.now() - hiddenAtRef.current >= staleMins * 60_000) {
-          fetchBriefing(true);
-        }
-        hiddenAtRef.current = null;
+      if (document.hidden) return;
+      const staleMins = settings.briefingStaleMinutes ?? 2;
+      const lastFetch = briefingTimestampRef.current;
+      if (staleMins > 0 && lastFetch && Date.now() - lastFetch >= staleMins * 60_000) {
+        fetchBriefing(true);
       }
     };
     document.addEventListener("visibilitychange", handler);
@@ -582,11 +603,40 @@ export default function DashboardView({
   const scanForFollowUps = useCallback(async () => {
     if (!settings.apiKey) return;
     setFollowUpScanning(true);
+
+    // Gather recent conversations (2–5 days old) from localStorage
+    let recentConversations: { id: string; title: string; messageCount: number; lastMessageSnippet: string; updatedAt: string }[] = [];
+    try {
+      const raw = localStorage.getItem("gc_conversations");
+      if (raw) {
+        const allConvs = JSON.parse(raw) as { id: string; title: string; messages: { role: string; content: string }[]; updatedAt: number; archived?: boolean }[];
+        const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
+        const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
+        recentConversations = allConvs
+          .filter((c) => !c.archived && c.messages.length >= 3 && c.updatedAt >= fiveDaysAgo && c.updatedAt <= twoDaysAgo)
+          .slice(0, 10)
+          .map((c) => {
+            const lastMsg = c.messages[c.messages.length - 1];
+            return {
+              id: c.id,
+              title: c.title || "Untitled conversation",
+              messageCount: c.messages.length,
+              lastMessageSnippet: (lastMsg?.content || "").slice(0, 200),
+              updatedAt: new Date(c.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+            };
+          });
+      }
+    } catch { /* ignore */ }
+
     try {
       const res = await fetch("/api/followups", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.model }),
+        body: JSON.stringify({
+          apiKey: settings.apiKey,
+          model: settings.model,
+          conversations: recentConversations.length > 0 ? recentConversations : undefined,
+        }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -594,23 +644,54 @@ export default function DashboardView({
         const newFollowUps: FollowUp[] = suggestions.map((s) => ({
           id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
           title: s.title,
-          source: (s.source === "email" || s.source === "calendar" ? s.source : "manual") as FollowUp["source"],
+          source: (s.source === "email" || s.source === "calendar" || s.source === "conversation" ? s.source : "manual") as FollowUp["source"],
+          sourceUrl: s.threadId ? `https://mail.google.com/mail/u/0/#inbox/${s.threadId}` : undefined,
+          threadId: s.threadId || undefined,
+          conversationId: s.conversationId || undefined,
           dueDate: s.dueDate ? new Date(s.dueDate).getTime() : undefined,
           status: "pending" as const,
+          contactName: s.contactName || (s.recipientRaw && !s.contactEmail ? s.recipientRaw.replace(/<[^>]+>/g, "").replace(/"/g, "").trim() : undefined),
+          contactEmail: s.contactEmail,
           notes: [
-            s.contactName && s.contactEmail ? `${s.contactName} <${s.contactEmail}>` : s.contactName || s.contactEmail || "",
             s.company ? `@ ${s.company}` : "",
-            s.lastAction ? `Last: ${s.lastAction}` : "",
+            s.lastAction || "",
             s.notes || "",
           ].filter(Boolean).join(" · "),
           createdAt: Date.now(),
           updatedAt: Date.now(),
         }));
+        const DISMISS_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+        const DISMISS_RESET_MS = 7 * 24 * 60 * 60 * 1000;  // 7 days — re-surface if thread re-appears after this
+
         const manualItems = followUps.filter((f) => f.source === "manual");
         const doneItems = followUps.filter((f) => f.status === "done");
-        const kept = [...manualItems, ...doneItems.filter((d) => d.source !== "manual")];
+        const allDismissed = followUps.filter((f) => f.status === "dismissed");
+
+        // Drop dismissals older than 30 days — they've been hidden long enough
+        const dismissedItems = allDismissed.filter((f) => Date.now() - f.updatedAt < DISMISS_EXPIRY_MS);
+
+        // Dismissed items that are still "fresh" (< 7 days) are strongly blocked;
+        // older ones can be reset if the API found fresh activity on the same thread.
+        const freshDismissedThreadIds = new Set(
+          dismissedItems.filter((f) => f.threadId && Date.now() - f.updatedAt < DISMISS_RESET_MS).map((f) => f.threadId!),
+        );
+        const freshDismissedConvIds = new Set(
+          dismissedItems.filter((f) => f.conversationId && Date.now() - f.updatedAt < DISMISS_RESET_MS).map((f) => f.conversationId!),
+        );
+        const freshDismissedTitles = new Set(
+          dismissedItems.filter((f) => Date.now() - f.updatedAt < DISMISS_RESET_MS).map((f) => f.title.toLowerCase()),
+        );
+
+        const kept = [...manualItems, ...doneItems.filter((d) => d.source !== "manual"), ...dismissedItems];
         const keptTitles = new Set(kept.map((f) => f.title.toLowerCase()));
-        const unique = newFollowUps.filter((f) => !keptTitles.has(f.title.toLowerCase()));
+
+        const unique = newFollowUps.filter((f) => {
+          if (keptTitles.has(f.title.toLowerCase())) return false;
+          if (f.threadId && freshDismissedThreadIds.has(f.threadId)) return false;
+          if (f.conversationId && freshDismissedConvIds.has(f.conversationId)) return false;
+          if (freshDismissedTitles.has(f.title.toLowerCase())) return false;
+          return true;
+        });
         onFollowUpsUpdate([...unique, ...kept]);
         localStorage.setItem("gc_followup_scan_ts", String(Date.now()));
       }
@@ -634,7 +715,11 @@ export default function DashboardView({
   }
 
   function removeFollowUp(id: string) {
-    onFollowUpsUpdate(followUps.filter((f) => f.id !== id));
+    onFollowUpsUpdate(
+      followUps.map((f) =>
+        f.id === id ? { ...f, status: "dismissed" as const, updatedAt: Date.now() } : f,
+      ),
+    );
   }
 
   // ── Drafts ──
@@ -816,12 +901,16 @@ export default function DashboardView({
               </p>
             </div>
             <button
-              onClick={() => { fetchBriefing(true); scanForFollowUps(); fetchDraftEmails(); }}
-              disabled={briefingLoading || followUpScanning || draftsLoading}
+              onClick={() => {
+                setRefreshAllLoading(true);
+                Promise.allSettled([fetchBriefing(true), scanForFollowUps(), fetchDraftEmails()])
+                  .finally(() => setRefreshAllLoading(false));
+              }}
+              disabled={refreshAllLoading}
               className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-accent/10 transition-all text-text-muted hover:text-accent cursor-pointer disabled:opacity-40"
               title="Refresh all sections"
             >
-              <RefreshCw size={14} className={briefingLoading || followUpScanning || draftsLoading ? "animate-refresh" : ""} />
+              <RefreshCw size={14} className={refreshAllLoading ? "animate-refresh" : ""} />
               <span className="text-[10px] font-medium">Refresh all</span>
             </button>
           </div>
@@ -1064,17 +1153,49 @@ export default function DashboardView({
                         } catch { /* ignore */ }
                         const barPct = durationMins > 0 ? Math.min(Math.max(durationMins / 120, 0.15), 1) : 0;
 
+                        const hasAttendees = item.attendees && item.attendees.length > 0;
+                        const minsUntilStart = eventStart ? Math.round((eventStart - now) / 60000) : Infinity;
+                        const isSoon = isToday && minsUntilStart >= 0 && minsUntilStart <= 15;
+
+                        let hasExternal = false;
+                        if (hasAttendees) {
+                          const selfEmail = item.attendees!.find((a) => a.self)?.email;
+                          const userDomain = selfEmail?.split("@")[1]?.toLowerCase();
+                          if (userDomain && !userDomain.startsWith("gmail.") && !userDomain.startsWith("googlemail.")) {
+                            hasExternal = item.attendees!.some(
+                              (a) => !a.self && a.email && a.email.split("@")[1]?.toLowerCase() !== userDomain,
+                            );
+                          }
+                        }
+
                         items.push(
-                          <li key={item.id} className="group">
+                          <li
+                            key={item.id}
+                            className="group relative"
+                            onMouseEnter={() => hasAttendees && setHoveredEventId(item.id)}
+                            onMouseLeave={() => setHoveredEventId(null)}
+                          >
                             <a
                               href={item.url || "https://calendar.google.com"}
                               target="_blank"
                               rel="noopener"
-                              className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer"
+                              className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${
+                                isSoon ? "bg-accent/10 border border-accent/25 ring-1 ring-accent/15" : ""
+                              }`}
                             >
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className="text-xs text-text truncate flex-1">{item.text}</p>
+                                  <p className={`text-xs truncate flex-1 ${isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
+                                  {hasExternal && (
+                                    <span className="text-[9px] font-medium text-google-yellow bg-google-yellow/10 border border-google-yellow/20 px-1.5 py-0.5 rounded-full shrink-0">
+                                      External
+                                    </span>
+                                  )}
+                                  {isSoon && (
+                                    <span className="text-[9px] font-semibold text-accent bg-accent/15 px-1.5 py-0.5 rounded-full shrink-0 animate-pulse">
+                                      {minsUntilStart <= 1 ? "Now" : `${minsUntilStart}m`}
+                                    </span>
+                                  )}
                                   {item.detail && <span className="text-xs font-semibold text-accent shrink-0">{item.detail}</span>}
                                 </div>
                                 {barPct > 0 && (
@@ -1091,6 +1212,59 @@ export default function DashboardView({
                               </div>
                               <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
                             </a>
+
+                            {hasAttendees && hoveredEventId === item.id && (
+                              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-bg-secondary border border-border rounded-xl shadow-xl p-3 space-y-2 min-w-[260px]"
+                                onMouseEnter={() => setHoveredEventId(item.id)}
+                                onMouseLeave={() => setHoveredEventId(null)}
+                              >
+                                {item.organizer && (
+                                  <div className="flex items-center gap-2 pb-2 border-b border-border">
+                                    <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">Organizer</span>
+                                    <span className="text-[11px] text-text">{item.organizer.name}</span>
+                                    {item.organizer.email && item.organizer.name !== item.organizer.email && (
+                                      <span className="text-[10px] text-text-muted">{item.organizer.email}</span>
+                                    )}
+                                  </div>
+                                )}
+                                <div className="space-y-1">
+                                  {(() => {
+                                    const selfDomain = item.attendees!.find((a) => a.self)?.email?.split("@")[1]?.toLowerCase();
+                                    const isOrgDomain = selfDomain && !selfDomain.startsWith("gmail.") && !selfDomain.startsWith("googlemail.");
+                                    return [...item.attendees!].sort((a, b) => (b.organizer ? 1 : 0) - (a.organizer ? 1 : 0)).map((a) => {
+                                      const isExternal = isOrgDomain && !a.self && a.email?.split("@")[1]?.toLowerCase() !== selfDomain;
+                                      return (
+                                        <div key={a.email} className="flex items-center gap-2">
+                                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                            a.status === "accepted" ? "bg-success" :
+                                            a.status === "declined" ? "bg-danger" :
+                                            a.status === "tentative" ? "bg-google-yellow" :
+                                            "bg-text-muted/40"
+                                          }`} />
+                                          <span className="text-[11px] text-text truncate flex-1">
+                                            {a.name}
+                                            {a.self && <span className="text-text-muted ml-1">(you)</span>}
+                                            {a.organizer && <span className="text-accent ml-1 text-[10px]">organizer</span>}
+                                            {isExternal && <span className="text-google-yellow ml-1 text-[9px]">external</span>}
+                                          </span>
+                                          <span className={`text-[10px] shrink-0 ${
+                                            a.status === "accepted" ? "text-success" :
+                                            a.status === "declined" ? "text-danger" :
+                                            a.status === "tentative" ? "text-google-yellow" :
+                                            "text-text-muted"
+                                          }`}>
+                                            {a.status === "accepted" ? "Accepted" :
+                                             a.status === "declined" ? "Declined" :
+                                             a.status === "tentative" ? "Maybe" :
+                                             "No response"}
+                                          </span>
+                                        </div>
+                                      );
+                                    });
+                                  })()}
+                                </div>
+                              </div>
+                            )}
                           </li>
                         );
 
@@ -1187,7 +1361,45 @@ export default function DashboardView({
                     className="mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 border-border hover:border-accent flex items-center justify-center cursor-pointer transition-all"
                   />
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm text-text">{fu.title}</p>
+                    {fu.source === "email" && (fu.contactName || fu.contactEmail) ? (
+                      <>
+                        <p className="text-sm font-medium text-text truncate">
+                          {fu.contactName || fu.contactEmail}
+                          {fu.contactEmail && fu.contactName && (
+                            <span className="font-normal text-text-muted ml-1.5 text-[11px]">{fu.contactEmail}</span>
+                          )}
+                        </p>
+                        {fu.sourceUrl ? (
+                          <a href={fu.sourceUrl} target="_blank" rel="noopener" className="text-[12px] text-text-secondary hover:text-accent transition-colors truncate block mt-0.5">
+                            {fu.title}
+                            <ExternalLink size={9} className="inline ml-1 opacity-0 group-hover:opacity-60 transition-opacity" />
+                          </a>
+                        ) : (
+                          <p className="text-[12px] text-text-secondary truncate mt-0.5">{fu.title}</p>
+                        )}
+                      </>
+                    ) : fu.sourceUrl ? (
+                      <a href={fu.sourceUrl} target="_blank" rel="noopener" className="text-sm text-text hover:text-accent transition-colors">
+                        {fu.title}
+                        <ExternalLink size={10} className="inline ml-1 opacity-0 group-hover:opacity-60 transition-opacity" />
+                      </a>
+                    ) : fu.source === "conversation" && fu.conversationId && onOpenConversation ? (
+                      <button
+                        onClick={() => onOpenConversation(fu.conversationId!)}
+                        className="text-sm text-text hover:text-accent transition-colors text-left flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <MessageSquare size={12} className="text-accent shrink-0" />
+                        {fu.title}
+                      </button>
+                    ) : (
+                      <p className="text-sm text-text">{fu.title}</p>
+                    )}
+                    {fu.source === "conversation" && (
+                      <span className="inline-flex items-center gap-1 text-[10px] text-accent/70 mt-0.5">
+                        <MessageSquare size={8} />
+                        Past conversation
+                      </span>
+                    )}
                     <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                       {fu.dueDate && (
                         <span className="flex items-center gap-1 text-[10px] text-text-muted">
@@ -1195,12 +1407,12 @@ export default function DashboardView({
                           {new Date(fu.dueDate).toLocaleDateString()}
                         </span>
                       )}
-                      <span className="text-[10px] text-text-muted capitalize">{fu.source}</span>
                     </div>
-                    {fu.notes && <p className="text-[11px] text-text-muted mt-1">{fu.notes}</p>}
+                    {fu.notes && <p className="text-[11px] text-text-muted mt-0.5">{fu.notes}</p>}
                   </div>
-                  <button onClick={() => removeFollowUp(fu.id)} className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-hover text-text-muted hover:text-danger cursor-pointer transition-all">
-                    <Trash2 size={12} />
+                  <button onClick={() => removeFollowUp(fu.id)} className="flex items-center gap-1 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-hover text-text-muted hover:text-text-secondary cursor-pointer transition-all" title="Dismiss suggestion">
+                    <X size={11} />
+                    <span className="text-[10px]">Dismiss</span>
                   </button>
                 </div>
               ))}

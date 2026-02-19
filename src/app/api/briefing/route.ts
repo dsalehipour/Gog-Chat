@@ -3,6 +3,14 @@ import { runGogCommand, getDefaultAccount } from "@/lib/gog";
 
 export const maxDuration = 60;
 
+interface Attendee {
+  name: string;
+  email: string;
+  status: string;
+  organizer?: boolean;
+  self?: boolean;
+}
+
 interface BriefingItem {
   id: string;
   text: string;
@@ -14,6 +22,8 @@ interface BriefingItem {
   threadId?: string;
   isUnread?: boolean;
   date?: string;
+  organizer?: { name: string; email: string };
+  attendees?: Attendee[];
 }
 
 interface BriefingSection {
@@ -89,7 +99,8 @@ export async function GET(request: Request) {
       sections.push({
         title: "Today's Events",
         items: events.map(
-          (e: Record<string, string | Record<string, string>>) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (e: any) => {
             const start = e.start as Record<string, string> | undefined;
             const end = e.end as Record<string, string> | undefined;
             const startDt = start?.dateTime || start?.date || "";
@@ -105,6 +116,23 @@ export async function GET(request: Request) {
             } catch {
               timeStr = startDt;
             }
+
+            const rawAttendees = Array.isArray(e.attendees) ? e.attendees : [];
+            const attendees: Attendee[] = rawAttendees.map(
+              (a: { displayName?: string; email?: string; responseStatus?: string; organizer?: boolean; self?: boolean }) => ({
+                name: a.displayName || a.email || "Unknown",
+                email: a.email || "",
+                status: a.responseStatus || "needsAction",
+                organizer: a.organizer || false,
+                self: a.self || false,
+              }),
+            );
+
+            const orgField = e.organizer as { displayName?: string; email?: string } | undefined;
+            const organizer = orgField
+              ? { name: orgField.displayName || orgField.email || "Unknown", email: orgField.email || "" }
+              : undefined;
+
             return {
               id: e.id as string,
               text: (e.summary as string) || "(untitled)",
@@ -112,6 +140,8 @@ export async function GET(request: Request) {
               url: e.htmlLink as string,
               startTime: startDt,
               endTime: endDt,
+              organizer,
+              attendees,
             };
           },
         ),
