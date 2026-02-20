@@ -189,7 +189,7 @@ export default function ChatInterface({
       const res = await fetch("/api/suggestions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.model }),
+        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.lightModel || settings.model }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -201,7 +201,7 @@ export default function ChatInterface({
       }
     } catch { /* fall through to fallback */ }
     setSuggestionsLoading(false);
-  }, [hasApiKey, settings.apiKey, settings.model, readCache, writeCache]);
+  }, [hasApiKey, settings.apiKey, settings.lightModel, settings.model, readCache, writeCache]);
 
   useEffect(() => {
     if (hasApiKey && messages.length === 0 && !suggestionsRequested.current) {

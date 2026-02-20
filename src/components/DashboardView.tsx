@@ -286,7 +286,7 @@ export default function DashboardView({
       const res = await fetch("/api/routine-suggestions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.model }),
+        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.lightModel || settings.model }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -297,7 +297,7 @@ export default function DashboardView({
       }
     } catch { /* ignore */ }
     setRoutineSuggestionsLoading(false);
-  }, [settings.apiKey, settings.model, readRoutineSuggestionsCache, writeRoutineSuggestionsCache]);
+  }, [settings.apiKey, settings.lightModel, settings.model, readRoutineSuggestionsCache, writeRoutineSuggestionsCache]);
 
   useEffect(() => {
     if (settings.apiKey && !routineSuggestionsRequested.current) {
@@ -630,7 +630,7 @@ export default function DashboardView({
       const res = await fetch("/api/recap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startDate: start, endDate: end, apiKey: settings.apiKey, model: settings.model }),
+        body: JSON.stringify({ startDate: start, endDate: end, apiKey: settings.apiKey, model: settings.lightModel || settings.model }),
         signal: controller.signal,
       });
 
@@ -674,7 +674,7 @@ export default function DashboardView({
     } finally {
       setRecapLoading(false);
     }
-  }, [settings.apiKey, settings.model]);
+  }, [settings.apiKey, settings.lightModel, settings.model]);
 
   useEffect(() => {
     if (!recapAutoLoadedRef.current) {

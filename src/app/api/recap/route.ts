@@ -97,7 +97,7 @@ Use markdown formatting with ## for section headers. Be concise. If a section ha
     async start(controller) {
       try {
         const response = await client.messages.create({
-          model: model || "claude-opus-4-6",
+          model: model || "claude-haiku-4-5-20251001",
           max_tokens: 4096,
           system: "You are a productivity assistant generating brief, actionable activity recaps. Focus on achievements, not routine. Keep it tight.",
           messages: [{ role: "user", content: recapPrompt }],

@@ -62,6 +62,7 @@ export interface EmailStyleProfile {
 export interface Settings {
   apiKey: string;
   model: string;
+  lightModel: string;
   gogAccount: string;
   customModels: string[];
   maxTokens: number;
@@ -93,6 +94,7 @@ export const DEFAULT_MODELS = [
 export const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
   model: "claude-opus-4-6",
+  lightModel: "claude-haiku-4-5-20251001",
   gogAccount: "",
   customModels: [],
   maxTokens: 16384,

@@ -166,7 +166,7 @@ export default function SettingsPanel({
       const res = await fetch("/api/drafts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "analyze-style", apiKey: local.apiKey, model: local.model }),
+        body: JSON.stringify({ action: "analyze-style", apiKey: local.apiKey, model: local.lightModel || local.model }),
       });
       if (res.ok) {
         const data = await res.json();
@@ -174,7 +174,7 @@ export default function SettingsPanel({
       }
     } catch { /* ignore */ }
     finally { setAnalyzingStyle(false); }
-  }, [local.apiKey, local.model, onStyleUpdate]);
+  }, [local.apiKey, local.lightModel, local.model, onStyleUpdate]);
 
   if (!open) return null;
 
@@ -200,6 +200,7 @@ export default function SettingsPanel({
       ...local,
       customModels: local.customModels.filter((m) => m !== model),
       model: local.model === model ? DEFAULT_SETTINGS.model : local.model,
+      lightModel: local.lightModel === model ? DEFAULT_SETTINGS.lightModel : local.lightModel,
     });
   };
 
@@ -412,11 +413,32 @@ export default function SettingsPanel({
           <section className="space-y-3">
             <label className="text-sm font-medium text-text-secondary flex items-center gap-2">
               <Cpu size={15} />
-              Model
+              Primary Model
             </label>
+            <p className="text-[11px] text-text-muted -mt-1">Used for chat, email drafting, and direct actions.</p>
             <select
               value={local.model}
               onChange={(e) => setLocal({ ...local, model: e.target.value })}
+              className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all appearance-none cursor-pointer"
+            >
+              {allModels.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </section>
+
+          {/* Background Model */}
+          <section className="space-y-3">
+            <label className="text-sm font-medium text-text-secondary flex items-center gap-2">
+              <Cpu size={15} />
+              Background Model
+            </label>
+            <p className="text-[11px] text-text-muted -mt-1">Used for suggestions, recaps, style analysis, and other background tasks. A lighter model saves cost.</p>
+            <select
+              value={local.lightModel}
+              onChange={(e) => setLocal({ ...local, lightModel: e.target.value })}
               className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/30 transition-all appearance-none cursor-pointer"
             >
               {allModels.map((m) => (
