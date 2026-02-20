@@ -50,11 +50,21 @@ export async function GET(request: Request) {
     const messages: { id?: string; snippet?: string; payload?: MsgPayload; labelIds?: string[] }[] = data.thread?.messages || [];
 
     if (full) {
-      const subject = messages.length > 0
-        ? getHeader(messages[0].payload?.headers || [], "Subject")
+      // Sort all messages by date (chronological order, oldest first)
+      const sortedMessages = messages
+        .filter(m => m.id && m.payload)
+        .sort((a, b) => {
+          const dateA = getHeader(a.payload?.headers || [], "Date");
+          const dateB = getHeader(b.payload?.headers || [], "Date");
+          if (!dateA || !dateB) return 0;
+          return new Date(dateA).getTime() - new Date(dateB).getTime(); // Oldest first for thread display
+        });
+
+      const subject = sortedMessages.length > 0
+        ? getHeader(sortedMessages[0].payload?.headers || [], "Subject")
         : "";
 
-      const threadMessages = messages.map((msg) => {
+      const threadMessages = sortedMessages.map((msg) => {
         const headers = msg.payload?.headers || [];
         return {
           id: msg.id || "",
@@ -75,7 +85,17 @@ export async function GET(request: Request) {
       });
     }
 
-    const msg = messages[messages.length - 1] || messages[0];
+    // Sort messages by date to ensure we get the truly most recent one
+    const sortedMessages = messages
+      .filter(m => m.id && m.payload) // Only include valid messages
+      .sort((a, b) => {
+        const dateA = getHeader(a.payload?.headers || [], "Date");
+        const dateB = getHeader(b.payload?.headers || [], "Date");
+        if (!dateA || !dateB) return 0;
+        return new Date(dateB).getTime() - new Date(dateA).getTime(); // Most recent first
+      });
+
+    const msg = sortedMessages[0] || messages[messages.length - 1] || messages[0];
     if (!msg) {
       return NextResponse.json({ snippet: "", to: "", cc: "", bodyPreview: "" });
     }
@@ -89,7 +109,7 @@ export async function GET(request: Request) {
       to: getHeader(headers, "To"),
       cc: getHeader(headers, "Cc"),
       date: getHeader(headers, "Date"),
-      bodyPreview: body.slice(0, 800),
+      bodyPreview: body, // Show full body like the sidebar does
     });
   } catch {
     return NextResponse.json({ error: "Failed to parse thread" }, { status: 500 });
