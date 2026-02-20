@@ -45,8 +45,6 @@ interface Props {
   theme: "light" | "dark";
   onToggleTheme: () => void;
   syncStatus: SyncStatus;
-  followUpCount: number;
-  draftCount: number;
 }
 
 const SERVICE_ICONS = [
@@ -74,8 +72,6 @@ export default function Sidebar({
   theme,
   onToggleTheme,
   syncStatus,
-  followUpCount,
-  draftCount,
 }: Props) {
   const [showArchived, setShowArchived] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -90,8 +86,6 @@ export default function Sidebar({
   const archived = conversations.filter((c) => c.archived);
   const starred = active.filter((c) => c.starred);
   const unstarred = active.filter((c) => !c.starred);
-
-  const totalBadge = followUpCount + draftCount;
 
   const searchResults = searchQuery.trim()
     ? active.filter((c) =>
@@ -207,17 +201,11 @@ export default function Sidebar({
         >
           <LayoutDashboard size={14} className="shrink-0 opacity-60" />
           <span>Dashboard</span>
-          {totalBadge > 0 ? (
-            <span className="ml-auto text-[10px] bg-accent/15 text-accent px-1.5 py-0.5 rounded-full font-medium">
-              {totalBadge > 9 ? "9+" : totalBadge}
-            </span>
-          ) : (
-            <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><Command size={11} /></kbd>
-              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><ArrowBigUp size={12} /></kbd>
-              <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-[11px] text-text-secondary font-semibold shadow-sm">K</kbd>
-            </span>
-          )}
+          <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><Command size={11} /></kbd>
+            <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-text-secondary shadow-sm"><ArrowBigUp size={12} /></kbd>
+            <kbd className="min-w-[20px] h-[20px] flex items-center justify-center rounded-md bg-bg-tertiary border border-border/80 text-[11px] text-text-secondary font-semibold shadow-sm">K</kbd>
+          </span>
         </button>
 
         {/* Search row + expandable panel */}

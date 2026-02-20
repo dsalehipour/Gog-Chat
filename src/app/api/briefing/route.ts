@@ -24,6 +24,8 @@ interface BriefingItem {
   date?: string;
   organizer?: { name: string; email: string };
   attendees?: Attendee[];
+  meetUrl?: string;
+  description?: string;
 }
 
 interface BriefingSection {
@@ -133,6 +135,17 @@ export async function GET(request: Request) {
               ? { name: orgField.displayName || orgField.email || "Unknown", email: orgField.email || "" }
               : undefined;
 
+            let meetUrl: string | undefined;
+            if (typeof e.hangoutLink === "string" && e.hangoutLink) {
+              meetUrl = e.hangoutLink;
+            } else if (e.conferenceData?.entryPoints) {
+              const videoEntry = (e.conferenceData.entryPoints as { entryPointType?: string; uri?: string }[])
+                .find((ep) => ep.entryPointType === "video");
+              if (videoEntry?.uri) meetUrl = videoEntry.uri;
+            }
+
+            const description = typeof e.description === "string" ? e.description.trim() : undefined;
+
             return {
               id: e.id as string,
               text: (e.summary as string) || "(untitled)",
@@ -142,6 +155,8 @@ export async function GET(request: Request) {
               endTime: endDt,
               organizer,
               attendees,
+              meetUrl: meetUrl || undefined,
+              description: description || undefined,
             };
           },
         ),
@@ -219,6 +234,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: true });
     }
     return NextResponse.json({ error: result.stderr || "Failed to unsnooze" }, { status: 500 });
+  }
+
+  if (action === "spam" && threadId) {
+    const result = await runGogCommand(
+      ["gmail", "thread", "modify", threadId, "--add", "SPAM", "--remove", "INBOX"],
+      account,
+    );
+    if (result.success) {
+      return NextResponse.json({ success: true });
+    }
+    return NextResponse.json({ error: result.stderr || "Failed to report spam" }, { status: 500 });
   }
 
   return NextResponse.json({ error: "Invalid action" }, { status: 400 });

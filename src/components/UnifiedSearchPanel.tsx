@@ -3,7 +3,6 @@
 import { useState, useRef, useEffect } from "react";
 import {
   X,
-  Search,
   Loader2,
   ExternalLink,
   Mail,
@@ -110,7 +109,6 @@ export default function UnifiedSearchPanel({
       <div className="relative bg-bg-secondary border border-border rounded-2xl w-full max-w-2xl max-h-[70vh] flex flex-col animate-fade-in shadow-2xl">
         {/* Search header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <Search size={18} className="text-text-muted shrink-0" />
           <input
             ref={inputRef}
             type="text"

@@ -1,11 +1,10 @@
 import { runGogCommand, getDefaultAccount } from "./gog";
-import type { Conversation, FollowUp } from "./types";
+import type { Conversation } from "./types";
 import { writeFileSync, readFileSync, mkdirSync, unlinkSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
 const FOLDER_NAME = "GogChat";
-const FOLLOWUPS_FILE = "followups.json";
 
 function tempPath(name: string): string {
   return join(tmpdir(), `gc_sync_${name}`);
@@ -206,117 +205,6 @@ export function mergeConversations(
         merged.set(conv.id, { ...existing, driveFileId: conv.driveFileId || existing.driveFileId });
       }
     }
-  }
-
-  return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
-// ── Follow-up Drive sync ──
-
-export async function uploadFollowUps(
-  followUps: FollowUp[],
-  folderId: string,
-  driveFileId?: string,
-): Promise<string> {
-  const tempFile = tempPath(FOLLOWUPS_FILE);
-
-  try {
-    writeFileSync(tempFile, JSON.stringify(followUps, null, 2), "utf-8");
-    const account = await getDefaultAccount();
-    let result;
-
-    if (driveFileId) {
-      result = await runGogCommand(
-        ["drive", "upload", tempFile, "--replace", driveFileId, "--json", "--force"],
-        account,
-      );
-    } else {
-      result = await runGogCommand(
-        ["drive", "upload", tempFile, "--parent", folderId, "--name", FOLLOWUPS_FILE, "--json", "--force"],
-        account,
-      );
-    }
-
-    if (result.success && result.stdout) {
-      try {
-        const parsed = JSON.parse(result.stdout);
-        const id = parsed.id || parsed.file?.id || parsed.fileId || parsed.Id;
-        if (id) return id;
-      } catch { /* fall through */ }
-      const idMatch = result.stdout.match(/[a-zA-Z0-9_-]{20,}/);
-      if (idMatch) return idMatch[0];
-    }
-
-    if (!result.success) {
-      throw new Error(`Follow-up upload failed: ${result.stderr}`);
-    }
-
-    return driveFileId || "";
-  } finally {
-    try { unlinkSync(tempFile); } catch { /* ignore */ }
-  }
-}
-
-export async function findFollowUpsFile(folderId: string): Promise<DriveFile | null> {
-  const account = await getDefaultAccount();
-  const result = await runGogCommand(
-    ["drive", "search", `'${folderId}' in parents and name = '${FOLLOWUPS_FILE}' and trashed = false`, "--json"],
-    account,
-  );
-
-  if (!result.success || !result.stdout) return null;
-
-  try {
-    const parsed = JSON.parse(result.stdout);
-    const files = Array.isArray(parsed) ? parsed : parsed?.files || parsed?.results || [];
-    if (files.length === 0) return null;
-    // If multiple, take most recently modified
-    const sorted = files.sort(
-      (a: Record<string, string>, b: Record<string, string>) =>
-        (b.modifiedTime || "").localeCompare(a.modifiedTime || ""),
-    );
-    return { id: sorted[0].id || sorted[0].Id, name: FOLLOWUPS_FILE, modifiedTime: sorted[0].modifiedTime };
-  } catch {
-    return null;
-  }
-}
-
-export async function downloadFollowUps(fileId: string): Promise<FollowUp[]> {
-  const tempFile = tempPath(`download_${FOLLOWUPS_FILE}`);
-
-  try {
-    const account = await getDefaultAccount();
-    const result = await runGogCommand(
-      ["drive", "download", fileId, "--out", tempFile, "--force"],
-      account,
-    );
-
-    const readAndParse = () => {
-      const content = readFileSync(tempFile, "utf-8");
-      const parsed = JSON.parse(content);
-      return Array.isArray(parsed) ? parsed : [];
-    };
-
-    if (result.success) return readAndParse();
-    try { return readAndParse(); } catch { return []; }
-  } finally {
-    try { unlinkSync(tempFile); } catch { /* ignore */ }
-  }
-}
-
-export function mergeFollowUps(local: FollowUp[], remote: FollowUp[]): FollowUp[] {
-  const merged = new Map<string, FollowUp>();
-
-  for (const fu of local) merged.set(fu.id, fu);
-
-  for (const fu of remote) {
-    const existing = merged.get(fu.id);
-    if (!existing) {
-      merged.set(fu.id, fu);
-    } else if (fu.updatedAt > existing.updatedAt) {
-      merged.set(fu.id, fu);
-    }
-    // else keep local (it's newer or same)
   }
 
   return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);

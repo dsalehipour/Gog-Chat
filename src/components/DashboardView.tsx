@@ -12,17 +12,10 @@ import {
   CalendarClock,
   ChevronLeft,
   ChevronRight,
-  ListChecks,
   Plus,
   Check,
   Clock,
   Trash2,
-  Sparkles,
-  RotateCcw,
-  PenLine,
-  Send,
-  SkipForward,
-  Edit3,
   Timer,
   Play,
   Pause,
@@ -31,9 +24,12 @@ import {
   AlarmClock,
   Users,
   X,
-  MessageSquare,
+  ShieldAlert,
+  Lightbulb,
+  Sparkles,
+  Video,
 } from "lucide-react";
-import type { FollowUp, Routine, RoutineSchedule, EmailStyleProfile, Settings } from "@/lib/types";
+import type { Routine, RoutineSchedule, Settings } from "@/lib/types";
 import { getNextRunTime } from "@/lib/scheduler";
 
 // ─── Types ──────────────────────────────────────────────────
@@ -66,54 +62,21 @@ interface BriefingSection {
   items: BriefingItem[];
 }
 
-interface DraftEmail {
-  id: string;
-  threadId: string;
-  subject: string;
-  from: string;
-  snippet: string;
-  date: string;
-}
-
-interface DraftState {
-  emailId: string;
-  draft: string;
-  loading: boolean;
-  editing: boolean;
-  sent: boolean;
-  skipped: boolean;
-}
-
-interface FollowUpSuggestion {
-  threadId?: string;
-  conversationId?: string;
-  title: string;
-  source: string;
-  contactName?: string;
-  contactEmail?: string;
-  recipientRaw?: string;
-  company?: string;
-  lastAction?: string;
-  dueDate: string | null;
-  notes: string;
-}
-
 // ─── Props ──────────────────────────────────────────────────
 
 interface Props {
   settings: Settings;
-  followUps: FollowUp[];
-  onFollowUpsUpdate: (fus: FollowUp[]) => void;
   routines: Routine[];
   onRoutinesUpdate: (routines: Routine[]) => void;
   onRunRoutineNow: (instruction: string) => void;
-  emailStyle: EmailStyleProfile | null;
-  onStyleUpdate: (profile: EmailStyleProfile) => void;
   onBriefingItemClick: (text: string) => void;
-  onOpenConversation?: (id: string) => void;
+  onOpenThread?: (threadId: string) => void;
+  activeThreadId?: string | null;
   scrollToSection?: string | null;
   onScrollHandled?: () => void;
   scrollToTop?: number;
+  removedThreadId?: string | null;
+  onRemovedThreadHandled?: () => void;
 }
 
 // ─── Helpers ────────────────────────────────────────────────
@@ -228,18 +191,17 @@ const RECAP_CACHE_TTL = 24 * 60 * 60 * 1000;
 
 export default function DashboardView({
   settings,
-  followUps,
-  onFollowUpsUpdate,
   routines,
   onRoutinesUpdate,
   onRunRoutineNow,
-  emailStyle,
-  onStyleUpdate,
   onBriefingItemClick,
-  onOpenConversation,
+  onOpenThread,
+  activeThreadId,
   scrollToSection,
   onScrollHandled,
   scrollToTop,
+  removedThreadId,
+  onRemovedThreadHandled,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   // ── Briefing state ──
@@ -251,6 +213,9 @@ export default function DashboardView({
   const [calDayOffset, setCalDayOffset] = useState(0);
   const [calLoading, setCalLoading] = useState(false);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const [hoveredEmailId, setHoveredEmailId] = useState<string | null>(null);
+  const [emailPreviews, setEmailPreviews] = useState<Record<string, { from: string; to: string; cc: string; bodyPreview: string; loading?: boolean }>>({});
+  const [spamConfirmId, setSpamConfirmId] = useState<string | null>(null);
   const [snoozeOpenId, setSnoozeOpenId] = useState<string | null>(null);
   const [snoozeCustom, setSnoozeCustom] = useState(false);
   const [snoozeDate, setSnoozeDate] = useState("");
@@ -268,21 +233,7 @@ export default function DashboardView({
   const recapAbortRef = useRef<AbortController | null>(null);
   const recapAutoLoadedRef = useRef(false);
 
-  // ── Follow-ups state ──
-  const [followUpScanning, setFollowUpScanning] = useState(false);
-  const followUpAutoScannedRef = useRef(false);
   const [refreshAllLoading, setRefreshAllLoading] = useState(false);
-
-  // ── Drafts state ──
-  const [draftEmails, setDraftEmails] = useState<DraftEmail[]>([]);
-  const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
-  const [draftsLoading, setDraftsLoading] = useState(false);
-  const [analyzingStyle, setAnalyzingStyle] = useState(false);
-  const [editingStyleRaw, setEditingStyleRaw] = useState(false);
-  const [styleEditText, setStyleEditText] = useState("");
-  const [styleExpanded, setStyleExpanded] = useState(false);
-  const draftsLoadedRef = useRef(false);
-  const styleAnalyzedRef = useRef(false);
 
   // ── Routines state ──
   const [showRoutineForm, setShowRoutineForm] = useState(false);
@@ -293,6 +244,75 @@ export default function DashboardView({
   const [routineDayOfWeek, setRoutineDayOfWeek] = useState(1);
   const [routineDayOfMonth, setRoutineDayOfMonth] = useState(1);
   const [routineOnceDate, setRoutineOnceDate] = useState(fmt(new Date()));
+
+  // ── Routine suggestions ──
+  interface RoutineSuggestion { title: string; instruction: string; schedule: string; }
+  const ROUTINE_SUGGESTIONS_KEY = "gc_routine_suggestions";
+  const ROUTINE_SUGGESTIONS_TTL = 12 * 60 * 60 * 1000;
+
+  const readRoutineSuggestionsCache = useCallback((): RoutineSuggestion[] | null => {
+    try {
+      const raw = localStorage.getItem(ROUTINE_SUGGESTIONS_KEY);
+      if (!raw) return null;
+      const { suggestions, ts } = JSON.parse(raw) as { suggestions: RoutineSuggestion[]; ts: number };
+      if (Date.now() - ts > ROUTINE_SUGGESTIONS_TTL) return null;
+      return suggestions;
+    } catch { return null; }
+  }, []);
+
+  const writeRoutineSuggestionsCache = useCallback((suggestions: RoutineSuggestion[]) => {
+    try {
+      localStorage.setItem(ROUTINE_SUGGESTIONS_KEY, JSON.stringify({ suggestions, ts: Date.now() }));
+    } catch { /* quota */ }
+  }, []);
+
+  const [routineSuggestions, setRoutineSuggestions] = useState<RoutineSuggestion[] | null>(null);
+  const [routineSuggestionsLoading, setRoutineSuggestionsLoading] = useState(false);
+  const routineSuggestionsRequested = useRef(false);
+
+  useEffect(() => {
+    const cached = readRoutineSuggestionsCache();
+    if (cached) setRoutineSuggestions(cached);
+  }, [readRoutineSuggestionsCache]);
+
+  const fetchRoutineSuggestions = useCallback(async (bypassCache = false) => {
+    if (!settings.apiKey) return;
+    if (!bypassCache) {
+      const cached = readRoutineSuggestionsCache();
+      if (cached) { setRoutineSuggestions(cached); return; }
+    }
+    setRoutineSuggestionsLoading(true);
+    try {
+      const res = await fetch("/api/routine-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey: settings.apiKey, model: settings.model }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.suggestions) && data.suggestions.length >= 4) {
+          setRoutineSuggestions(data.suggestions);
+          writeRoutineSuggestionsCache(data.suggestions);
+        }
+      }
+    } catch { /* ignore */ }
+    setRoutineSuggestionsLoading(false);
+  }, [settings.apiKey, settings.model, readRoutineSuggestionsCache, writeRoutineSuggestionsCache]);
+
+  useEffect(() => {
+    if (settings.apiKey && !routineSuggestionsRequested.current) {
+      routineSuggestionsRequested.current = true;
+      fetchRoutineSuggestions();
+    }
+  }, [settings.apiKey, fetchRoutineSuggestions]);
+
+  function applyRoutineSuggestion(s: RoutineSuggestion) {
+    setRoutineInstruction(s.instruction);
+    setRoutineScheduleType(s.schedule as RoutineSchedule["type"]);
+    setRoutineTime("09:00");
+    setShowRoutineForm(true);
+    setRoutineEditId(null);
+  }
 
   // ── Scroll handling ──
   useEffect(() => {
@@ -310,6 +330,19 @@ export default function DashboardView({
       containerRef.current.scrollTo({ top: 0, behavior: "smooth" });
     }
   }, [scrollToTop]);
+
+  useEffect(() => {
+    if (removedThreadId) {
+      setBriefingSections((prev) =>
+        prev.map((s) =>
+          s.title === "Inbox"
+            ? { ...s, items: s.items.filter((i) => i.threadId !== removedThreadId && i.id !== removedThreadId) }
+            : s,
+        ),
+      );
+      onRemovedThreadHandled?.();
+    }
+  }, [removedThreadId, onRemovedThreadHandled]);
 
   // ── Briefing fetch ──
   const fetchBriefing = useCallback(async (force = false) => {
@@ -365,9 +398,13 @@ export default function DashboardView({
     briefingTimestampRef.current = briefingTimestamp;
   }, [briefingTimestamp]);
 
+  const activeThreadIdRef = useRef(activeThreadId);
+  useEffect(() => { activeThreadIdRef.current = activeThreadId; }, [activeThreadId]);
+
   useEffect(() => {
     const handler = () => {
       if (document.hidden) return;
+      if (activeThreadIdRef.current) return;
       const staleMins = settings.briefingStaleMinutes ?? 2;
       const lastFetch = briefingTimestampRef.current;
       if (staleMins > 0 && lastFetch && Date.now() - lastFetch >= staleMins * 60_000) {
@@ -376,6 +413,21 @@ export default function DashboardView({
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
+  }, [settings.briefingStaleMinutes, fetchBriefing]);
+
+  // Periodic staleness check while tab is visible (complements the tab-return check)
+  useEffect(() => {
+    const staleMins = settings.briefingStaleMinutes ?? 2;
+    if (staleMins <= 0) return;
+    const id = setInterval(() => {
+      if (document.hidden) return;
+      if (activeThreadIdRef.current) return;
+      const lastFetch = briefingTimestampRef.current;
+      if (lastFetch && Date.now() - lastFetch >= staleMins * 60_000) {
+        fetchBriefing(true);
+      }
+    }, 30_000);
+    return () => clearInterval(id);
   }, [settings.briefingStaleMinutes, fetchBriefing]);
 
   const fetchCalendarDay = useCallback(async (offset: number) => {
@@ -406,6 +458,22 @@ export default function DashboardView({
     prevCalOffset.current = calDayOffset;
   }, [calDayOffset, fetchCalendarDay]);
 
+  const fetchEmailPreview = useCallback(async (threadId: string) => {
+    if (emailPreviews[threadId]) return;
+    setEmailPreviews((prev) => ({ ...prev, [threadId]: { from: "", to: "", cc: "", bodyPreview: "", loading: true } }));
+    try {
+      const res = await fetch(`/api/email/preview?threadId=${threadId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setEmailPreviews((prev) => ({ ...prev, [threadId]: { ...data, loading: false } }));
+      } else {
+        setEmailPreviews((prev) => ({ ...prev, [threadId]: { from: "", to: "", cc: "", bodyPreview: "", loading: false } }));
+      }
+    } catch {
+      setEmailPreviews((prev) => ({ ...prev, [threadId]: { from: "", to: "", cc: "", bodyPreview: "", loading: false } }));
+    }
+  }, [emailPreviews]);
+
   const archiveEmail = async (threadId: string) => {
     try {
       await fetch("/api/briefing", {
@@ -420,6 +488,25 @@ export default function DashboardView({
             : s,
         ),
       );
+    } catch { /* ignore */ }
+  };
+
+  const reportSpam = async (threadId: string) => {
+    try {
+      await fetch("/api/briefing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "spam", threadId }),
+      });
+      setBriefingSections((prev) =>
+        prev.map((s) =>
+          s.title === "Inbox"
+            ? { ...s, items: s.items.filter((i) => i.threadId !== threadId && i.id !== threadId) }
+            : s,
+        ),
+      );
+      setSpamConfirmId(null);
+      setHoveredEmailId(null);
     } catch { /* ignore */ }
   };
 
@@ -599,217 +686,6 @@ export default function DashboardView({
     }
   }, [settings.apiKey, generateRecap]);
 
-  // ── Follow-ups ──
-  const scanForFollowUps = useCallback(async () => {
-    if (!settings.apiKey) return;
-    setFollowUpScanning(true);
-
-    // Gather recent conversations (2–5 days old) from localStorage
-    let recentConversations: { id: string; title: string; messageCount: number; lastMessageSnippet: string; updatedAt: string }[] = [];
-    try {
-      const raw = localStorage.getItem("gc_conversations");
-      if (raw) {
-        const allConvs = JSON.parse(raw) as { id: string; title: string; messages: { role: string; content: string }[]; updatedAt: number; archived?: boolean }[];
-        const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
-        const fiveDaysAgo = Date.now() - 5 * 24 * 60 * 60 * 1000;
-        recentConversations = allConvs
-          .filter((c) => !c.archived && c.messages.length >= 3 && c.updatedAt >= fiveDaysAgo && c.updatedAt <= twoDaysAgo)
-          .slice(0, 10)
-          .map((c) => {
-            const lastMsg = c.messages[c.messages.length - 1];
-            return {
-              id: c.id,
-              title: c.title || "Untitled conversation",
-              messageCount: c.messages.length,
-              lastMessageSnippet: (lastMsg?.content || "").slice(0, 200),
-              updatedAt: new Date(c.updatedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-            };
-          });
-      }
-    } catch { /* ignore */ }
-
-    try {
-      const res = await fetch("/api/followups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          apiKey: settings.apiKey,
-          model: settings.model,
-          conversations: recentConversations.length > 0 ? recentConversations : undefined,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const suggestions: FollowUpSuggestion[] = data.suggestions || [];
-        const newFollowUps: FollowUp[] = suggestions.map((s) => ({
-          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-          title: s.title,
-          source: (s.source === "email" || s.source === "calendar" || s.source === "conversation" ? s.source : "manual") as FollowUp["source"],
-          sourceUrl: s.threadId ? `https://mail.google.com/mail/u/0/#inbox/${s.threadId}` : undefined,
-          threadId: s.threadId || undefined,
-          conversationId: s.conversationId || undefined,
-          dueDate: s.dueDate ? new Date(s.dueDate).getTime() : undefined,
-          status: "pending" as const,
-          contactName: s.contactName || (s.recipientRaw && !s.contactEmail ? s.recipientRaw.replace(/<[^>]+>/g, "").replace(/"/g, "").trim() : undefined),
-          contactEmail: s.contactEmail,
-          notes: [
-            s.company ? `@ ${s.company}` : "",
-            s.lastAction || "",
-            s.notes || "",
-          ].filter(Boolean).join(" · "),
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        }));
-        const DISMISS_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
-        const DISMISS_RESET_MS = 7 * 24 * 60 * 60 * 1000;  // 7 days — re-surface if thread re-appears after this
-
-        const manualItems = followUps.filter((f) => f.source === "manual");
-        const doneItems = followUps.filter((f) => f.status === "done");
-        const allDismissed = followUps.filter((f) => f.status === "dismissed");
-
-        // Drop dismissals older than 30 days — they've been hidden long enough
-        const dismissedItems = allDismissed.filter((f) => Date.now() - f.updatedAt < DISMISS_EXPIRY_MS);
-
-        // Dismissed items that are still "fresh" (< 7 days) are strongly blocked;
-        // older ones can be reset if the API found fresh activity on the same thread.
-        const freshDismissedThreadIds = new Set(
-          dismissedItems.filter((f) => f.threadId && Date.now() - f.updatedAt < DISMISS_RESET_MS).map((f) => f.threadId!),
-        );
-        const freshDismissedConvIds = new Set(
-          dismissedItems.filter((f) => f.conversationId && Date.now() - f.updatedAt < DISMISS_RESET_MS).map((f) => f.conversationId!),
-        );
-        const freshDismissedTitles = new Set(
-          dismissedItems.filter((f) => Date.now() - f.updatedAt < DISMISS_RESET_MS).map((f) => f.title.toLowerCase()),
-        );
-
-        const kept = [...manualItems, ...doneItems.filter((d) => d.source !== "manual"), ...dismissedItems];
-        const keptTitles = new Set(kept.map((f) => f.title.toLowerCase()));
-
-        const unique = newFollowUps.filter((f) => {
-          if (keptTitles.has(f.title.toLowerCase())) return false;
-          if (f.threadId && freshDismissedThreadIds.has(f.threadId)) return false;
-          if (f.conversationId && freshDismissedConvIds.has(f.conversationId)) return false;
-          if (freshDismissedTitles.has(f.title.toLowerCase())) return false;
-          return true;
-        });
-        onFollowUpsUpdate([...unique, ...kept]);
-        localStorage.setItem("gc_followup_scan_ts", String(Date.now()));
-      }
-    } catch { /* ignore */ }
-    finally { setFollowUpScanning(false); }
-  }, [settings.apiKey, settings.model, followUps, onFollowUpsUpdate]);
-
-  useEffect(() => {
-    if (!followUpAutoScannedRef.current && settings.apiKey) {
-      followUpAutoScannedRef.current = true;
-      scanForFollowUps();
-    }
-  }, [settings.apiKey, scanForFollowUps]);
-
-  function toggleFollowUpStatus(id: string) {
-    onFollowUpsUpdate(
-      followUps.map((f) =>
-        f.id === id ? { ...f, status: f.status === "done" ? "pending" : "done", updatedAt: Date.now() } : f,
-      ),
-    );
-  }
-
-  function removeFollowUp(id: string) {
-    onFollowUpsUpdate(
-      followUps.map((f) =>
-        f.id === id ? { ...f, status: "dismissed" as const, updatedAt: Date.now() } : f,
-      ),
-    );
-  }
-
-  // ── Drafts ──
-  const fetchDraftEmails = useCallback(async () => {
-    if (!settings.apiKey) return;
-    setDraftsLoading(true);
-    try {
-      const params = new URLSearchParams();
-      params.set("apiKey", settings.apiKey);
-      if (settings.model) params.set("model", settings.model);
-      const res = await fetch(`/api/drafts?${params}`);
-      if (res.ok) {
-        const data = await res.json();
-        setDraftEmails(data.emails || []);
-      }
-    } catch { /* ignore */ }
-    finally { setDraftsLoading(false); }
-  }, [settings.apiKey, settings.model]);
-
-  const analyzeStyle = useCallback(async () => {
-    if (!settings.apiKey) return;
-    setAnalyzingStyle(true);
-    try {
-      const res = await fetch("/api/drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "analyze-style", apiKey: settings.apiKey, model: settings.model }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.profile) onStyleUpdate(data.profile);
-      }
-    } catch { /* ignore */ }
-    finally { setAnalyzingStyle(false); }
-  }, [settings.apiKey, settings.model, onStyleUpdate]);
-
-  useEffect(() => {
-    if (!draftsLoadedRef.current && settings.apiKey) {
-      draftsLoadedRef.current = true;
-      fetchDraftEmails();
-    }
-  }, [fetchDraftEmails, settings.apiKey]);
-
-  useEffect(() => {
-    if (!styleAnalyzedRef.current && settings.apiKey && !emailStyle) {
-      styleAnalyzedRef.current = true;
-      analyzeStyle();
-    }
-  }, [settings.apiKey, emailStyle, analyzeStyle]);
-
-  async function generateDraft(email: DraftEmail) {
-    if (!settings.apiKey) return;
-    setDrafts((prev) => ({
-      ...prev,
-      [email.id]: { emailId: email.id, draft: "", loading: true, editing: false, sent: false, skipped: false },
-    }));
-
-    try {
-      const res = await fetch("/api/drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate-draft", apiKey: settings.apiKey, model: settings.model, emailId: email.id, styleProfile: emailStyle }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], draft: data.draft || "", loading: false } }));
-      }
-    } catch {
-      setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], draft: "Failed to generate draft.", loading: false } }));
-    }
-  }
-
-  async function sendDraft(email: DraftEmail) {
-    const ds = drafts[email.id];
-    if (!ds?.draft) return;
-    setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], loading: true } }));
-    try {
-      const res = await fetch("/api/drafts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "send-draft", emailId: email.id, threadId: email.threadId, draftText: ds.draft, subject: email.subject, to: email.from }),
-      });
-      if (res.ok) {
-        setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], sent: true, loading: false } }));
-      }
-    } catch {
-      setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], loading: false } }));
-    }
-  }
-
   // ── Routines ──
   function resetRoutineForm() {
     setRoutineInstruction("");
@@ -875,9 +751,6 @@ export default function DashboardView({
   const recapRange = getRecapRange();
   const isWeekPreset = recapPreset === "this-week" || recapPreset === "last-week";
   const isMonthPreset = recapPreset === "this-month" || recapPreset === "last-month";
-  const pendingFollowUps = followUps.filter((f) => f.status === "pending");
-  const doneFollowUps = followUps.filter((f) => f.status === "done");
-  const activeDraftEmails = draftEmails.filter((e) => !drafts[e.id]?.sent && !drafts[e.id]?.skipped);
 
   const emailSection = briefingSections.find((s) => s.title === "Inbox");
   const calendarSection = briefingSections.find((s) => s.title === "Today's Events");
@@ -885,7 +758,7 @@ export default function DashboardView({
 
   return (
     <div ref={containerRef} className="flex-1 overflow-y-auto">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-10 xl:px-16 py-8 space-y-12">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-10 xl:px-16 py-8 space-y-12">
 
         {/* ═══════════ BRIEFING ═══════════ */}
         <section id="briefing">
@@ -903,8 +776,7 @@ export default function DashboardView({
             <button
               onClick={() => {
                 setRefreshAllLoading(true);
-                Promise.allSettled([fetchBriefing(true), scanForFollowUps(), fetchDraftEmails()])
-                  .finally(() => setRefreshAllLoading(false));
+                fetchBriefing(true).finally(() => setRefreshAllLoading(false));
               }}
               disabled={refreshAllLoading}
               className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg hover:bg-accent/10 transition-all text-text-muted hover:text-accent cursor-pointer disabled:opacity-40"
@@ -944,13 +816,20 @@ export default function DashboardView({
                   <ul className="space-y-1">
                     {emailSection.items.slice(0, 8).map((item) => {
                       const tid = item.threadId || item.id;
+                      const preview = emailPreviews[tid];
                       return (
-                        <li key={item.id} className="group relative">
-                          <a
-                            href={item.url || `https://mail.google.com/mail/u/0/#inbox/${tid}`}
-                            target="_blank"
-                            rel="noopener"
-                            className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${
+                        <li
+                          key={item.id}
+                          className="group relative"
+                          onMouseEnter={() => { setHoveredEmailId(tid); fetchEmailPreview(tid); }}
+                          onMouseLeave={() => { setHoveredEmailId(null); setSpamConfirmId(null); }}
+                        >
+                          <div
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => onOpenThread?.(tid)}
+                            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpenThread?.(tid); } }}
+                            className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer text-left ${
                               item.isUnread
                                 ? "bg-bg-secondary/80"
                                 : ""
@@ -970,28 +849,142 @@ export default function DashboardView({
                                 );
                               })()}
                             </div>
-                            {item.date && (
-                              <span className={`shrink-0 text-[10px] tabular-nums ${item.isUnread ? "text-text-secondary font-medium" : "text-text-muted/60"}`}>
-                                {formatEmailDate(item.date)}
-                              </span>
-                            )}
-                            <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSnoozeCustom(false); setSnoozeOpenId(snoozeOpenId === tid ? null : tid); }}
-                                className="p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
-                                title="Snooze"
-                              >
-                                <AlarmClock size={12} />
-                              </button>
-                              <button
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); archiveEmail(tid); }}
-                                className="p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
-                                title="Archive"
-                              >
-                                <Archive size={12} />
-                              </button>
+                            <div className="shrink-0 flex flex-col items-end gap-0.5 ml-2">
+                              {item.date && (
+                                <span className={`text-[10px] tabular-nums leading-none ${item.isUnread ? "text-text-secondary font-medium" : "text-text-muted/60"}`}>
+                                  {formatEmailDate(item.date)}
+                                </span>
+                              )}
+                              <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); setSnoozeCustom(false); setSnoozeOpenId(snoozeOpenId === tid ? null : tid); }}
+                                  className="p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
+                                  title="Snooze"
+                                >
+                                  <AlarmClock size={12} />
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); archiveEmail(tid); }}
+                                  className="p-1 rounded hover:bg-bg-tertiary text-text-muted hover:text-accent transition-all cursor-pointer"
+                                  title="Archive"
+                                >
+                                  <Archive size={12} />
+                                </button>
+                              </div>
                             </div>
-                          </a>
+                          </div>
+
+                          {hoveredEmailId === tid && (
+                            <div
+                              className="absolute left-0 right-0 top-full mt-1 z-50 bg-bg-secondary border border-border rounded-xl shadow-xl p-4 space-y-3 min-w-[320px] overflow-hidden"
+                              onMouseEnter={() => setHoveredEmailId(tid)}
+                              onMouseLeave={() => setHoveredEmailId(null)}
+                            >
+                              {preview?.loading ? (
+                                <div className="flex items-center gap-2 text-text-muted text-xs py-2">
+                                  <Loader2 size={12} className="animate-spin" />
+                                  Loading preview...
+                                </div>
+                              ) : preview ? (
+                                <>
+                                  {(() => {
+                                    function parseHeader(raw: string) {
+                                      return raw.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map((part) => {
+                                        const trimmed = part.trim();
+                                        const m = trimmed.match(/^"?(.+?)"?\s*<([^>]+)>$/);
+                                        return { name: m ? m[1].replace(/"/g, "").trim() : "", email: m ? m[2] : trimmed };
+                                      }).filter((r) => r.email);
+                                    }
+                                    return (
+                                      <div className="space-y-1.5">
+                                        {preview.from && (
+                                          <div className="flex items-start gap-2">
+                                            <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider shrink-0 mt-0.5 w-8">From</span>
+                                            <div className="flex flex-wrap gap-1">
+                                              {parseHeader(preview.from).map((r, i) => (
+                                                <span key={i} className="text-[11px] text-text font-medium bg-bg-tertiary px-1.5 py-0.5 rounded">
+                                                  {r.name && r.name !== r.email ? r.name + " " : ""}<span className="text-text-muted font-normal">{r.email}</span>
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {preview.to && (
+                                          <div className="flex items-start gap-2">
+                                            <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider shrink-0 mt-0.5 w-8">To</span>
+                                            <div className="flex flex-wrap gap-1">
+                                              {parseHeader(preview.to).map((r, i) => (
+                                                <span key={i} className="text-[11px] text-text bg-bg-tertiary px-1.5 py-0.5 rounded">
+                                                  {r.name && r.name !== r.email ? r.name + " " : ""}<span className="text-text-muted">{r.email}</span>
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                        {preview.cc && (
+                                          <div className="flex items-start gap-2">
+                                            <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider shrink-0 mt-0.5 w-8">Cc</span>
+                                            <div className="flex flex-wrap gap-1">
+                                              {parseHeader(preview.cc).map((r, i) => (
+                                                <span key={i} className="text-[11px] text-text bg-bg-tertiary px-1.5 py-0.5 rounded">
+                                                  {r.name && r.name !== r.email ? r.name + " " : ""}<span className="text-text-muted">{r.email}</span>
+                                                </span>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                  {preview.bodyPreview && (
+                                    <div className="border-t border-border pt-3">
+                                      <p className="text-[11px] text-text-secondary whitespace-pre-wrap break-words leading-relaxed max-h-48 overflow-y-auto overflow-x-hidden">
+                                        {preview.bodyPreview}
+                                      </p>
+                                    </div>
+                                  )}
+                                  <div className="border-t border-border pt-2 flex items-center justify-between">
+                                    <a
+                                      href={item.url || `https://mail.google.com/mail/u/0/#inbox/${tid}`}
+                                      target="_blank"
+                                      rel="noopener"
+                                      className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] text-accent hover:bg-accent/10 transition-colors"
+                                      onClick={(e) => e.stopPropagation()}
+                                    >
+                                      <ExternalLink size={11} />
+                                      View in Gmail
+                                    </a>
+                                    {spamConfirmId !== tid ? (
+                                      <button
+                                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSpamConfirmId(tid); }}
+                                        className="flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] text-text-muted hover:text-danger hover:bg-danger/10 transition-colors cursor-pointer"
+                                      >
+                                        <ShieldAlert size={11} />
+                                        Report spam
+                                      </button>
+                                    ) : (
+                                      <div className="flex items-center gap-2 px-2 py-1 rounded-lg bg-danger/10 border border-danger/20">
+                                        <ShieldAlert size={11} className="text-danger shrink-0" />
+                                        <span className="text-[11px] text-danger whitespace-nowrap">Mark as spam?</span>
+                                        <button
+                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); reportSpam(tid); }}
+                                          className="px-2 py-0.5 rounded bg-danger text-white text-[11px] font-medium hover:bg-red-500 transition-colors cursor-pointer"
+                                        >
+                                          Yes, spam
+                                        </button>
+                                        <button
+                                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setSpamConfirmId(null); }}
+                                          className="px-2 py-0.5 rounded bg-bg-tertiary text-text-muted text-[11px] hover:bg-bg-hover transition-colors cursor-pointer"
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </>
+                              ) : null}
+                            </div>
+                          )}
                           {snoozeOpenId === tid && (
                             <div
                               ref={snoozeRef}
@@ -1154,6 +1147,9 @@ export default function DashboardView({
                         const barPct = durationMins > 0 ? Math.min(Math.max(durationMins / 120, 0.15), 1) : 0;
 
                         const hasAttendees = item.attendees && item.attendees.length > 0;
+                        const hasMeet = !!item.meetUrl;
+                        const hasDescription = !!item.description;
+                        const hasTooltipData = hasAttendees || hasMeet || hasDescription;
                         const minsUntilStart = eventStart ? Math.round((eventStart - now) / 60000) : Infinity;
                         const isSoon = isToday && minsUntilStart >= 0 && minsUntilStart <= 15;
 
@@ -1172,7 +1168,7 @@ export default function DashboardView({
                           <li
                             key={item.id}
                             className="group relative"
-                            onMouseEnter={() => hasAttendees && setHoveredEventId(item.id)}
+                            onMouseEnter={() => hasTooltipData && setHoveredEventId(item.id)}
                             onMouseLeave={() => setHoveredEventId(null)}
                           >
                             <a
@@ -1186,6 +1182,9 @@ export default function DashboardView({
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
                                   <p className={`text-xs truncate flex-1 ${isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
+                                  {hasMeet && (
+                                    <Video size={11} className="shrink-0 text-google-blue" title="Has meeting link" />
+                                  )}
                                   {hasExternal && (
                                     <span className="text-[9px] font-medium text-google-yellow bg-google-yellow/10 border border-google-yellow/20 px-1.5 py-0.5 rounded-full shrink-0">
                                       External
@@ -1213,11 +1212,30 @@ export default function DashboardView({
                               <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
                             </a>
 
-                            {hasAttendees && hoveredEventId === item.id && (
+                            {hasTooltipData && hoveredEventId === item.id && (
                               <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-bg-secondary border border-border rounded-xl shadow-xl p-3 space-y-2 min-w-[260px]"
                                 onMouseEnter={() => setHoveredEventId(item.id)}
                                 onMouseLeave={() => setHoveredEventId(null)}
                               >
+                                {hasMeet && (
+                                  <a
+                                    href={item.meetUrl}
+                                    target="_blank"
+                                    rel="noopener"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="flex items-center gap-2 px-3 py-2 rounded-lg bg-google-blue/10 border border-google-blue/20 hover:bg-google-blue/20 transition-colors"
+                                  >
+                                    <Video size={14} className="text-google-blue shrink-0" />
+                                    <span className="text-xs font-medium text-google-blue">Join meeting</span>
+                                    <ExternalLink size={9} className="text-google-blue/60 ml-auto shrink-0" />
+                                  </a>
+                                )}
+                                {hasDescription && (
+                                  <div className={hasMeet || hasAttendees ? "pb-1" : ""}>
+                                    <p className="text-[10px] font-medium text-text-muted uppercase tracking-wider mb-1">Description</p>
+                                    <p className="text-[11px] text-text-secondary leading-relaxed whitespace-pre-wrap break-words line-clamp-6">{item.description}</p>
+                                  </div>
+                                )}
                                 {item.organizer && (
                                   <div className="flex items-center gap-2 pb-2 border-b border-border">
                                     <span className="text-[10px] font-medium text-text-muted uppercase tracking-wider">Organizer</span>
@@ -1227,42 +1245,44 @@ export default function DashboardView({
                                     )}
                                   </div>
                                 )}
-                                <div className="space-y-1">
-                                  {(() => {
-                                    const selfDomain = item.attendees!.find((a) => a.self)?.email?.split("@")[1]?.toLowerCase();
-                                    const isOrgDomain = selfDomain && !selfDomain.startsWith("gmail.") && !selfDomain.startsWith("googlemail.");
-                                    return [...item.attendees!].sort((a, b) => (b.organizer ? 1 : 0) - (a.organizer ? 1 : 0)).map((a) => {
-                                      const isExternal = isOrgDomain && !a.self && a.email?.split("@")[1]?.toLowerCase() !== selfDomain;
-                                      return (
-                                        <div key={a.email} className="flex items-center gap-2">
-                                          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                            a.status === "accepted" ? "bg-success" :
-                                            a.status === "declined" ? "bg-danger" :
-                                            a.status === "tentative" ? "bg-google-yellow" :
-                                            "bg-text-muted/40"
-                                          }`} />
-                                          <span className="text-[11px] text-text truncate flex-1">
-                                            {a.name}
-                                            {a.self && <span className="text-text-muted ml-1">(you)</span>}
-                                            {a.organizer && <span className="text-accent ml-1 text-[10px]">organizer</span>}
-                                            {isExternal && <span className="text-google-yellow ml-1 text-[9px]">external</span>}
-                                          </span>
-                                          <span className={`text-[10px] shrink-0 ${
-                                            a.status === "accepted" ? "text-success" :
-                                            a.status === "declined" ? "text-danger" :
-                                            a.status === "tentative" ? "text-google-yellow" :
-                                            "text-text-muted"
-                                          }`}>
-                                            {a.status === "accepted" ? "Accepted" :
-                                             a.status === "declined" ? "Declined" :
-                                             a.status === "tentative" ? "Maybe" :
-                                             "No response"}
-                                          </span>
-                                        </div>
-                                      );
-                                    });
-                                  })()}
-                                </div>
+                                {hasAttendees && (
+                                  <div className="space-y-1">
+                                    {(() => {
+                                      const selfDomain = item.attendees!.find((a) => a.self)?.email?.split("@")[1]?.toLowerCase();
+                                      const isOrgDomain = selfDomain && !selfDomain.startsWith("gmail.") && !selfDomain.startsWith("googlemail.");
+                                      return [...item.attendees!].sort((a, b) => (b.organizer ? 1 : 0) - (a.organizer ? 1 : 0)).map((a) => {
+                                        const isExternal = isOrgDomain && !a.self && a.email?.split("@")[1]?.toLowerCase() !== selfDomain;
+                                        return (
+                                          <div key={a.email} className="flex items-center gap-2">
+                                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                              a.status === "accepted" ? "bg-success" :
+                                              a.status === "declined" ? "bg-danger" :
+                                              a.status === "tentative" ? "bg-google-yellow" :
+                                              "bg-text-muted/40"
+                                            }`} />
+                                            <span className="text-[11px] text-text truncate flex-1">
+                                              {a.name}
+                                              {a.self && <span className="text-text-muted ml-1">(you)</span>}
+                                              {a.organizer && <span className="text-accent ml-1 text-[10px]">organizer</span>}
+                                              {isExternal && <span className="text-google-yellow ml-1 text-[9px]">external</span>}
+                                            </span>
+                                            <span className={`text-[10px] shrink-0 ${
+                                              a.status === "accepted" ? "text-success" :
+                                              a.status === "declined" ? "text-danger" :
+                                              a.status === "tentative" ? "text-google-yellow" :
+                                              "text-text-muted"
+                                            }`}>
+                                              {a.status === "accepted" ? "Accepted" :
+                                               a.status === "declined" ? "Declined" :
+                                               a.status === "tentative" ? "Maybe" :
+                                               "No response"}
+                                            </span>
+                                          </div>
+                                        );
+                                      });
+                                    })()}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </li>
@@ -1316,290 +1336,6 @@ export default function DashboardView({
               </div>
             </div>
           )}
-        </section>
-
-        {/* ═══════════ FOLLOW-UPS ═══════════ */}
-        <section id="followups">
-          <div className="flex items-center gap-3 mb-4">
-            <ListChecks size={20} className="text-accent" />
-            <h2 className="text-lg font-semibold">Follow-ups</h2>
-            {pendingFollowUps.length > 0 && (
-              <span className="text-xs bg-accent/15 text-accent px-2 py-0.5 rounded-full font-medium">{pendingFollowUps.length}</span>
-            )}
-            <button
-              onClick={scanForFollowUps}
-              disabled={followUpScanning || !settings.apiKey}
-              className="ml-auto p-2 rounded-lg hover:bg-accent/10 transition-all text-text-muted hover:text-accent cursor-pointer disabled:opacity-40"
-              title="Scan for follow-ups"
-            >
-              <RefreshCw size={16} className={followUpScanning ? "animate-refresh" : ""} />
-            </button>
-          </div>
-
-          <div className="rounded-xl border border-border bg-bg-secondary/50 p-4 space-y-2 min-h-[80px]">
-            {followUpScanning && pendingFollowUps.length === 0 && (
-              <div className="flex items-center justify-center gap-2 py-6 text-text-muted text-sm">
-                <Loader2 size={16} className="animate-spin" />
-                Scanning for follow-ups...
-              </div>
-            )}
-
-            {!followUpScanning && pendingFollowUps.length === 0 && doneFollowUps.length === 0 && (
-              <p className="text-center text-xs text-text-muted py-6">No follow-ups found. Hit refresh to scan your emails.</p>
-            )}
-
-            {pendingFollowUps
-              .sort((a, b) => {
-                if (a.dueDate && b.dueDate) return a.dueDate - b.dueDate;
-                if (a.dueDate) return -1;
-                return b.createdAt - a.createdAt;
-              })
-              .map((fu) => (
-                <div key={fu.id} className="group flex items-start gap-3 px-3 py-2.5 rounded-xl border border-border hover:border-accent/20 transition-all">
-                  <button
-                    onClick={() => toggleFollowUpStatus(fu.id)}
-                    className="mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 border-border hover:border-accent flex items-center justify-center cursor-pointer transition-all"
-                  />
-                  <div className="flex-1 min-w-0">
-                    {fu.source === "email" && (fu.contactName || fu.contactEmail) ? (
-                      <>
-                        <p className="text-sm font-medium text-text truncate">
-                          {fu.contactName || fu.contactEmail}
-                          {fu.contactEmail && fu.contactName && (
-                            <span className="font-normal text-text-muted ml-1.5 text-[11px]">{fu.contactEmail}</span>
-                          )}
-                        </p>
-                        {fu.sourceUrl ? (
-                          <a href={fu.sourceUrl} target="_blank" rel="noopener" className="text-[12px] text-text-secondary hover:text-accent transition-colors truncate block mt-0.5">
-                            {fu.title}
-                            <ExternalLink size={9} className="inline ml-1 opacity-0 group-hover:opacity-60 transition-opacity" />
-                          </a>
-                        ) : (
-                          <p className="text-[12px] text-text-secondary truncate mt-0.5">{fu.title}</p>
-                        )}
-                      </>
-                    ) : fu.sourceUrl ? (
-                      <a href={fu.sourceUrl} target="_blank" rel="noopener" className="text-sm text-text hover:text-accent transition-colors">
-                        {fu.title}
-                        <ExternalLink size={10} className="inline ml-1 opacity-0 group-hover:opacity-60 transition-opacity" />
-                      </a>
-                    ) : fu.source === "conversation" && fu.conversationId && onOpenConversation ? (
-                      <button
-                        onClick={() => onOpenConversation(fu.conversationId!)}
-                        className="text-sm text-text hover:text-accent transition-colors text-left flex items-center gap-1.5 cursor-pointer"
-                      >
-                        <MessageSquare size={12} className="text-accent shrink-0" />
-                        {fu.title}
-                      </button>
-                    ) : (
-                      <p className="text-sm text-text">{fu.title}</p>
-                    )}
-                    {fu.source === "conversation" && (
-                      <span className="inline-flex items-center gap-1 text-[10px] text-accent/70 mt-0.5">
-                        <MessageSquare size={8} />
-                        Past conversation
-                      </span>
-                    )}
-                    <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                      {fu.dueDate && (
-                        <span className="flex items-center gap-1 text-[10px] text-text-muted">
-                          <Clock size={9} />
-                          {new Date(fu.dueDate).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-                    {fu.notes && <p className="text-[11px] text-text-muted mt-0.5">{fu.notes}</p>}
-                  </div>
-                  <button onClick={() => removeFollowUp(fu.id)} className="flex items-center gap-1 px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-hover text-text-muted hover:text-text-secondary cursor-pointer transition-all" title="Dismiss suggestion">
-                    <X size={11} />
-                    <span className="text-[10px]">Dismiss</span>
-                  </button>
-                </div>
-              ))}
-
-            {doneFollowUps.length > 0 && (
-              <div className="pt-2 border-t border-border mt-2 space-y-1">
-                <p className="text-[10px] text-text-muted uppercase tracking-wider px-3">Completed</p>
-                {doneFollowUps.slice(0, 5).map((fu) => (
-                  <div key={fu.id} className="group flex items-start gap-3 px-3 py-1.5 rounded-xl opacity-50">
-                    <button
-                      onClick={() => toggleFollowUpStatus(fu.id)}
-                      className="mt-0.5 shrink-0 w-5 h-5 rounded-md border-2 bg-success border-success text-white flex items-center justify-center cursor-pointer transition-all"
-                    >
-                      <Check size={12} />
-                    </button>
-                    <p className="text-sm text-text-muted line-through flex-1">{fu.title}</p>
-                    <button onClick={() => toggleFollowUpStatus(fu.id)} className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-bg-hover text-text-muted cursor-pointer" title="Reopen">
-                      <RotateCcw size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-
-        {/* ═══════════ DRAFTS ═══════════ */}
-        <section id="drafts">
-          <div className="flex items-center gap-3 mb-4">
-            <PenLine size={20} className="text-accent" />
-            <h2 className="text-lg font-semibold">Email Drafts</h2>
-            {activeDraftEmails.length > 0 && (
-              <span className="text-xs bg-accent/15 text-accent px-2 py-0.5 rounded-full font-medium">{activeDraftEmails.length}</span>
-            )}
-            <button
-              onClick={fetchDraftEmails}
-              disabled={draftsLoading}
-              className="ml-auto p-2 rounded-lg hover:bg-accent/10 transition-all text-text-muted hover:text-accent cursor-pointer disabled:opacity-40"
-              title="Refresh drafts"
-            >
-              <RefreshCw size={16} className={draftsLoading ? "animate-refresh" : ""} />
-            </button>
-          </div>
-
-          {/* Style profile (collapsed by default) */}
-          {emailStyle ? (
-            <div className="rounded-xl border border-accent/20 bg-accent/5 mb-4 overflow-hidden">
-              <button
-                onClick={() => setStyleExpanded(!styleExpanded)}
-                className="w-full flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-accent/10 transition-colors"
-              >
-                <p className="text-xs font-medium text-accent">Your Writing Style</p>
-                <ChevronDown size={14} className={`text-accent/60 transition-transform ${styleExpanded ? "rotate-180" : ""}`} />
-              </button>
-              {styleExpanded && (
-                <div className="px-4 pb-4 border-t border-accent/10">
-                  <div className="flex justify-end gap-3 mt-2 mb-1">
-                    <button
-                      onClick={analyzeStyle}
-                      disabled={analyzingStyle || !settings.apiKey}
-                      className="text-[10px] text-accent/70 hover:text-accent cursor-pointer disabled:opacity-40 flex items-center gap-1"
-                    >
-                      <RefreshCw size={10} className={analyzingStyle ? "animate-refresh" : ""} />
-                      Re-analyze
-                    </button>
-                    <button
-                      onClick={() => { setEditingStyleRaw(!editingStyleRaw); setStyleEditText(emailStyle.raw); }}
-                      className="text-[10px] text-accent/70 hover:text-accent cursor-pointer"
-                    >
-                      {editingStyleRaw ? "Cancel" : "Edit"}
-                    </button>
-                  </div>
-                  {editingStyleRaw ? (
-                    <div className="space-y-2">
-                      <textarea
-                        value={styleEditText}
-                        onChange={(e) => setStyleEditText(e.target.value)}
-                        rows={3}
-                        className="w-full bg-bg-tertiary border border-border rounded-lg px-3 py-2 text-xs resize-none focus:outline-none focus:border-accent"
-                      />
-                      <button
-                        onClick={() => { onStyleUpdate({ ...emailStyle, raw: styleEditText }); setEditingStyleRaw(false); }}
-                        className="px-3 py-1 rounded-lg bg-accent text-white text-xs cursor-pointer"
-                      >
-                        Save
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="text-[11px] text-text-secondary space-y-0.5">
-                      <p><span className="text-text-muted">Tone:</span> {emailStyle.tone}, {emailStyle.formalityLevel}</p>
-                      <p><span className="text-text-muted">Greetings:</span> {emailStyle.greetingPatterns?.join(", ")}</p>
-                      <p><span className="text-text-muted">Sign-offs:</span> {emailStyle.signOffPatterns?.join(", ")}</p>
-                      <p className="text-text-muted italic mt-1">{emailStyle.raw}</p>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : settings.apiKey ? (
-            <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 p-3 mb-4 flex items-center justify-between">
-              <p className="text-xs text-text-muted">Analyze your sent emails to personalize drafts</p>
-              <button
-                onClick={analyzeStyle}
-                disabled={analyzingStyle}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 disabled:opacity-40 cursor-pointer transition-all"
-              >
-                {analyzingStyle ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                Learn My Style
-              </button>
-            </div>
-          ) : null}
-
-          <div className="rounded-xl border border-border bg-bg-secondary/50 p-4 space-y-3 min-h-[80px]">
-            {draftsLoading && draftEmails.length === 0 && (
-              <div className="flex items-center justify-center gap-2 py-6 text-text-muted text-sm">
-                <Loader2 size={16} className="animate-spin" />
-                Loading emails...
-              </div>
-            )}
-
-            {!draftsLoading && draftEmails.length === 0 && (
-              <p className="text-center text-xs text-text-muted py-6">No important unread emails to draft replies for</p>
-            )}
-
-            {activeDraftEmails.map((email) => {
-              const ds = drafts[email.id];
-              return (
-                <div key={email.id} className="rounded-xl border border-border p-4 space-y-3">
-                  <div>
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-medium text-text truncate flex-1">{email.subject}</p>
-                      {email.date && <span className="text-[10px] text-text-muted ml-2 shrink-0">{email.date}</span>}
-                    </div>
-                    <p className="text-xs text-text-muted">{email.from}</p>
-                    {email.snippet && <p className="text-xs text-text-secondary mt-1 line-clamp-2">{email.snippet}</p>}
-                  </div>
-
-                  {!ds ? (
-                    <button
-                      onClick={() => generateDraft(email)}
-                      disabled={!settings.apiKey}
-                      className="flex items-center gap-2 px-4 py-2 rounded-xl bg-accent/10 text-accent text-sm font-medium hover:bg-accent/20 disabled:opacity-40 cursor-pointer transition-all"
-                    >
-                      <PenLine size={14} />
-                      Generate Draft Reply
-                    </button>
-                  ) : ds.loading ? (
-                    <div className="flex items-center gap-2 text-text-muted text-sm py-2">
-                      <Loader2 size={14} className="animate-spin" />
-                      {ds.draft ? "Sending..." : "Generating draft..."}
-                    </div>
-                  ) : ds.sent ? (
-                    <div className="flex items-center gap-2 text-success text-sm py-2">
-                      <Check size={14} /> Sent
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {ds.editing ? (
-                        <textarea
-                          value={ds.draft}
-                          onChange={(e) => setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], draft: e.target.value } }))}
-                          rows={4}
-                          className="w-full bg-bg-tertiary border border-border rounded-xl px-4 py-2.5 text-sm resize-none focus:outline-none focus:border-accent transition-all"
-                        />
-                      ) : (
-                        <div className="bg-bg-tertiary rounded-xl px-4 py-3 text-sm text-text whitespace-pre-wrap">{ds.draft}</div>
-                      )}
-                      <div className="flex gap-2 flex-wrap">
-                        <button onClick={() => sendDraft(email)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-hover cursor-pointer transition-all">
-                          <Send size={12} /> Send
-                        </button>
-                        <button onClick={() => setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], editing: !prev[email.id].editing } }))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-tertiary border border-border text-xs text-text-secondary hover:bg-bg-hover cursor-pointer transition-all">
-                          <Edit3 size={12} /> {ds.editing ? "Preview" : "Edit"}
-                        </button>
-                        <button onClick={() => generateDraft(email)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-bg-tertiary border border-border text-xs text-text-secondary hover:bg-bg-hover cursor-pointer transition-all">
-                          <RefreshCw size={12} /> Regenerate
-                        </button>
-                        <button onClick={() => setDrafts((prev) => ({ ...prev, [email.id]: { ...prev[email.id], skipped: true } }))} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-text-muted hover:bg-bg-hover cursor-pointer transition-all ml-auto">
-                          <SkipForward size={12} /> Skip
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
         </section>
 
         {/* ═══════════ ROUTINES ═══════════ */}
@@ -1680,9 +1416,7 @@ export default function DashboardView({
               <div className="text-center py-6">
                 <Timer size={24} className="text-text-muted mx-auto mb-2 opacity-40" />
                 <p className="text-xs text-text-muted">No routines set up yet</p>
-                <button onClick={() => setShowRoutineForm(true)} className="mt-3 text-xs text-accent hover:text-accent-hover cursor-pointer">
-                  Create your first routine
-                </button>
+                <p className="text-[11px] text-text-muted/60 mt-1">Pick an idea below or create your own</p>
               </div>
             )}
 
@@ -1711,6 +1445,54 @@ export default function DashboardView({
                 </div>
               </div>
             ))}
+          </div>
+
+          {/* Routine ideas */}
+          <div className="mt-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Lightbulb size={13} className="text-amber-400" />
+              <span className="text-xs font-medium text-text-secondary">Ideas for you</span>
+              {routineSuggestionsLoading && <Loader2 size={11} className="animate-spin text-text-muted" />}
+              <button
+                onClick={() => { setRoutineSuggestions(null); routineSuggestionsRequested.current = false; fetchRoutineSuggestions(true); }}
+                className="ml-auto flex items-center gap-1 text-[10px] text-text-muted hover:text-text-secondary transition-colors cursor-pointer"
+                title="Refresh ideas"
+              >
+                <Sparkles size={10} />
+                New ideas
+              </button>
+            </div>
+            {routineSuggestionsLoading && !routineSuggestions ? (
+              <div className="grid grid-cols-2 gap-2">
+                {[0, 1, 2, 3].map((i) => (
+                  <div key={i} className="rounded-xl border border-border bg-bg-tertiary/50 p-3 animate-pulse h-[72px]" />
+                ))}
+              </div>
+            ) : routineSuggestions && routineSuggestions.length > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                {routineSuggestions.map((s, i) => (
+                  <button
+                    key={i}
+                    onClick={() => applyRoutineSuggestion(s)}
+                    className="group/idea text-left rounded-xl border border-border hover:border-accent/30 bg-bg-tertiary/30 hover:bg-accent/5 p-3 transition-all cursor-pointer"
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-[10px] font-medium uppercase tracking-wider text-accent/70">{s.schedule}</span>
+                    </div>
+                    <p className="text-xs font-medium text-text group-hover/idea:text-accent transition-colors leading-snug">{s.title}</p>
+                    <p className="text-[11px] text-text-muted mt-0.5 line-clamp-2 leading-snug">{s.instruction}</p>
+                  </button>
+                ))}
+              </div>
+            ) : !routineSuggestionsLoading ? (
+              <button
+                onClick={() => fetchRoutineSuggestions()}
+                className="w-full rounded-xl border border-dashed border-border hover:border-accent/30 p-4 text-center transition-all cursor-pointer group/gen"
+              >
+                <Sparkles size={16} className="mx-auto mb-1.5 text-text-muted group-hover/gen:text-accent transition-colors" />
+                <p className="text-xs text-text-muted group-hover/gen:text-text-secondary transition-colors">Generate routine ideas personalized to your workspace</p>
+              </button>
+            ) : null}
           </div>
         </section>
 

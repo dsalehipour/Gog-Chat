@@ -20,8 +20,12 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  PenLine,
+  RefreshCw,
+  Sparkles,
+  FolderSearch,
 } from "lucide-react";
-import { DEFAULT_MODELS, DEFAULT_SETTINGS, type Settings } from "@/lib/types";
+import { DEFAULT_MODELS, DEFAULT_SETTINGS, type Settings, type EmailStyleProfile } from "@/lib/types";
 
 interface Props {
   open: boolean;
@@ -30,6 +34,9 @@ interface Props {
   onSave: (settings: Settings) => void;
   gogStatus: { installed: boolean; version?: string; accounts?: string[] } | null;
   onGogStatusRefresh?: () => void;
+  emailStyle?: EmailStyleProfile | null;
+  onStyleUpdate?: (profile: EmailStyleProfile) => void;
+  onRestoreFromDrive?: (folderId: string) => Promise<number>;
 }
 
 export default function SettingsPanel({
@@ -39,11 +46,18 @@ export default function SettingsPanel({
   onSave,
   gogStatus,
   onGogStatusRefresh,
+  emailStyle,
+  onStyleUpdate,
+  onRestoreFromDrive,
 }: Props) {
   const [local, setLocal] = useState<Settings>(settings);
   const [newModel, setNewModel] = useState("");
   const [saved, setSaved] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [styleExpanded, setStyleExpanded] = useState(false);
+  const [analyzingStyle, setAnalyzingStyle] = useState(false);
+  const [editingStyleRaw, setEditingStyleRaw] = useState(false);
+  const [styleEditText, setStyleEditText] = useState("");
 
   // Auth state
   const [hasCredentials, setHasCredentials] = useState<boolean | null>(null);
@@ -52,6 +66,11 @@ export default function SettingsPanel({
   const [authMessage, setAuthMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [authEmail, setAuthEmail] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Drive restore state
+  const [restoreInput, setRestoreInput] = useState("");
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     setLocal(settings);
@@ -139,6 +158,23 @@ export default function SettingsPanel({
       setAuthLoading(false);
     }
   };
+
+  const analyzeStyle = useCallback(async () => {
+    if (!local.apiKey) return;
+    setAnalyzingStyle(true);
+    try {
+      const res = await fetch("/api/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "analyze-style", apiKey: local.apiKey, model: local.model }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.profile) onStyleUpdate?.(data.profile);
+      }
+    } catch { /* ignore */ }
+    finally { setAnalyzingStyle(false); }
+  }, [local.apiKey, local.model, onStyleUpdate]);
 
   if (!open) return null;
 
@@ -456,6 +492,62 @@ export default function SettingsPanel({
                 ? "Conversations are backed up to a GogChat folder in your Google Drive."
                 : "Drive sync is off. Conversations are only stored locally."}
             </p>
+
+            <div className="pt-2 border-t border-border space-y-2">
+              <p className="text-xs font-medium text-text-secondary flex items-center gap-1.5">
+                <FolderSearch size={12} />
+                Recover conversations from Drive
+              </p>
+              <p className="text-[11px] text-text-muted leading-relaxed">
+                If your conversations were lost, paste the link or ID of your previous GogChat folder from Google Drive to restore them.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={restoreInput}
+                  onChange={(e) => { setRestoreInput(e.target.value); setRestoreMessage(null); }}
+                  placeholder="Folder link or ID (e.g. https://drive.google.com/drive/folders/...)"
+                  className="flex-1 bg-bg-tertiary border border-border rounded-lg px-3 py-1.5 text-xs placeholder:text-text-muted focus:outline-none focus:border-accent transition-all"
+                />
+                <button
+                  onClick={async () => {
+                    if (!restoreInput.trim() || !onRestoreFromDrive) return;
+                    let folderId = restoreInput.trim();
+                    const folderMatch = folderId.match(/folders\/([a-zA-Z0-9_-]+)/);
+                    if (folderMatch) folderId = folderMatch[1];
+                    const idMatch = folderId.match(/^[a-zA-Z0-9_-]{10,}$/);
+                    if (!idMatch) {
+                      setRestoreMessage({ type: "error", text: "Could not extract a valid folder ID from the input." });
+                      return;
+                    }
+                    setRestoreLoading(true);
+                    setRestoreMessage(null);
+                    try {
+                      const count = await onRestoreFromDrive(folderId);
+                      if (count > 0) {
+                        setRestoreMessage({ type: "success", text: `Restored ${count} conversation${count !== 1 ? "s" : ""} from Drive.` });
+                        setRestoreInput("");
+                      } else {
+                        setRestoreMessage({ type: "error", text: "No conversations found in that folder." });
+                      }
+                    } catch {
+                      setRestoreMessage({ type: "error", text: "Failed to restore. Check the folder link and try again." });
+                    }
+                    setRestoreLoading(false);
+                  }}
+                  disabled={restoreLoading || !restoreInput.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-accent text-white text-xs font-medium hover:bg-accent-hover disabled:opacity-40 cursor-pointer transition-all flex items-center gap-1.5 shrink-0"
+                >
+                  {restoreLoading ? <Loader2 size={12} className="animate-spin" /> : <FolderSearch size={12} />}
+                  Restore
+                </button>
+              </div>
+              {restoreMessage && (
+                <p className={`text-[11px] ${restoreMessage.type === "success" ? "text-success" : "text-danger"}`}>
+                  {restoreMessage.text}
+                </p>
+              )}
+            </div>
           </section>
 
           {/* Briefing Refresh */}
@@ -513,6 +605,81 @@ export default function SettingsPanel({
             </p>
           </section>
 
+
+          {/* Writing Style */}
+          <section className="space-y-3">
+            <button
+              onClick={() => setStyleExpanded(!styleExpanded)}
+              className="flex items-center gap-2 text-sm font-medium text-text-secondary hover:text-text transition-colors cursor-pointer"
+            >
+              <PenLine size={15} />
+              Writing Style
+              {styleExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+            </button>
+
+            {styleExpanded && (
+              <div className="space-y-3 pl-1">
+                {emailStyle ? (
+                  <div className="rounded-xl border border-accent/20 bg-accent/5 p-4 space-y-3">
+                    <div className="flex justify-end gap-3">
+                      <button
+                        onClick={analyzeStyle}
+                        disabled={analyzingStyle || !local.apiKey}
+                        className="text-[11px] text-accent/70 hover:text-accent cursor-pointer disabled:opacity-40 flex items-center gap-1"
+                      >
+                        <RefreshCw size={10} className={analyzingStyle ? "animate-refresh" : ""} />
+                        Re-analyze
+                      </button>
+                      <button
+                        onClick={() => { setEditingStyleRaw(!editingStyleRaw); setStyleEditText(emailStyle.raw); }}
+                        className="text-[11px] text-accent/70 hover:text-accent cursor-pointer"
+                      >
+                        {editingStyleRaw ? "Cancel" : "Edit"}
+                      </button>
+                    </div>
+                    {editingStyleRaw ? (
+                      <div className="space-y-2">
+                        <textarea
+                          value={styleEditText}
+                          onChange={(e) => setStyleEditText(e.target.value)}
+                          rows={4}
+                          className="w-full bg-bg-tertiary border border-border rounded-lg px-3 py-2 text-xs resize-none focus:outline-none focus:border-accent"
+                        />
+                        <button
+                          onClick={() => { onStyleUpdate?.({ ...emailStyle, raw: styleEditText }); setEditingStyleRaw(false); }}
+                          className="px-3 py-1 rounded-lg bg-accent text-white text-xs cursor-pointer"
+                        >
+                          Save
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-text-secondary space-y-1">
+                        <p><span className="text-text-muted">Tone:</span> {emailStyle.tone}, {emailStyle.formalityLevel}</p>
+                        <p><span className="text-text-muted">Greetings:</span> {emailStyle.greetingPatterns?.join(", ")}</p>
+                        <p><span className="text-text-muted">Sign-offs:</span> {emailStyle.signOffPatterns?.join(", ")}</p>
+                        <p className="text-text-muted italic mt-1">{emailStyle.raw}</p>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-accent/30 bg-accent/5 p-3 flex items-center justify-between">
+                    <p className="text-xs text-text-muted">Analyze your sent emails to personalize auto-drafts</p>
+                    <button
+                      onClick={analyzeStyle}
+                      disabled={analyzingStyle || !local.apiKey}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent/10 text-accent text-xs font-medium hover:bg-accent/20 disabled:opacity-40 cursor-pointer transition-all"
+                    >
+                      {analyzingStyle ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                      Learn My Style
+                    </button>
+                  </div>
+                )}
+                <p className="text-xs text-text-muted">
+                  Used by auto-draft replies to match your writing tone and style.
+                </p>
+              </div>
+            )}
+          </section>
 
           {/* Advanced Settings */}
           <section className="space-y-3">

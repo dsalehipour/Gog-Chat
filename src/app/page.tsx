@@ -7,13 +7,13 @@ import DashboardView from "@/components/DashboardView";
 import SettingsPanel from "@/components/SettingsPanel";
 import ServicePanel from "@/components/ServicePanel";
 import UnifiedSearchPanel from "@/components/UnifiedSearchPanel";
+import EmailThreadPanel from "@/components/EmailThreadPanel";
 import {
   DEFAULT_SETTINGS,
   type Settings,
   type Conversation,
   type Message,
   type ToolExecution,
-  type FollowUp,
   type Routine,
   type EmailStyleProfile,
 } from "@/lib/types";
@@ -55,20 +55,6 @@ function saveToStorage<T>(key: string, value: T) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-function mergeFollowUpsLocal(local: FollowUp[], remote: FollowUp[]): FollowUp[] {
-  const merged = new Map<string, FollowUp>();
-  for (const fu of local) merged.set(fu.id, fu);
-  for (const fu of remote) {
-    const existing = merged.get(fu.id);
-    if (!existing) {
-      merged.set(fu.id, fu);
-    } else if (fu.updatedAt > existing.updatedAt) {
-      merged.set(fu.id, fu);
-    }
-  }
-  return Array.from(merged.values()).sort((a, b) => b.updatedAt - a.updatedAt);
-}
-
 function mergeLocal(local: Conversation[], remote: Conversation[]): Conversation[] {
   const merged = new Map<string, Conversation>();
   for (const c of local) merged.set(c.id, c);
@@ -108,9 +94,14 @@ export default function Home() {
   // --- Feature state ---
   const [unifiedSearchOpen, setUnifiedSearchOpen] = useState(false);
   const [unifiedSearchQuery, setUnifiedSearchQuery] = useState("");
-  const [followUps, setFollowUps] = useState<FollowUp[]>([]);
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [emailStyle, setEmailStyle] = useState<EmailStyleProfile | null>(null);
+
+  // Email thread sidebar
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [removedThreadId, setRemovedThreadId] = useState<string | null>(null);
+  const [emailPanelWidth, setEmailPanelWidth] = useState(420);
+  const resizingRef = useRef(false);
 
   // Dashboard scroll-to target
   const [scrollToSection, setScrollToSection] = useState<string | null>(null);
@@ -119,13 +110,9 @@ export default function Home() {
   // --- Refs ---
   const abortRef = useRef<AbortController | null>(null);
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const followUpSyncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const initialLoadDone = useRef(false);
   const skipNextSync = useRef(false);
-  const skipNextFollowUpSync = useRef(false);
   const conversationsRef = useRef<Conversation[]>([]);
-  const followUpsRef = useRef<FollowUp[]>([]);
-  const followUpDriveFileIdRef = useRef<string | null>(null);
   const routineCheckRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const prevActiveConvIdRef = useRef<string | null>(null);
 
@@ -134,8 +121,25 @@ export default function Home() {
   }, [conversations]);
 
   useEffect(() => {
-    followUpsRef.current = followUps;
-  }, [followUps]);
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!resizingRef.current) return;
+      const newWidth = Math.max(320, Math.min(window.innerWidth - 500, window.innerWidth - e.clientX));
+      setEmailPanelWidth(newWidth);
+    };
+    const handleMouseUp = () => {
+      if (resizingRef.current) {
+        resizingRef.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, []);
 
   useEffect(() => {
     const prevId = prevActiveConvIdRef.current;
@@ -213,47 +217,12 @@ export default function Home() {
     }, 5000);
   }, [pushToDrive]);
 
-  const pushFollowUpsToDrive = useCallback(async (fus: FollowUp[]) => {
-    if (fus.length === 0 && !followUpDriveFileIdRef.current) return;
-    setSyncStatus("syncing");
-    try {
-      const res = await fetch("/api/followups/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          followUps: fus,
-          driveFileId: followUpDriveFileIdRef.current || undefined,
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.driveFileId) followUpDriveFileIdRef.current = data.driveFileId;
-        setSyncStatus("synced");
-        setTimeout(() => setSyncStatus("idle"), 3000);
-      } else {
-        setSyncStatus("error");
-        setTimeout(() => setSyncStatus("idle"), 5000);
-      }
-    } catch {
-      setSyncStatus("error");
-      setTimeout(() => setSyncStatus("idle"), 5000);
-    }
-  }, []);
-
-  const scheduleFollowUpSync = useCallback(() => {
-    if (followUpSyncTimeoutRef.current) clearTimeout(followUpSyncTimeoutRef.current);
-    followUpSyncTimeoutRef.current = setTimeout(() => {
-      pushFollowUpsToDrive(followUpsRef.current);
-    }, 5000);
-  }, [pushFollowUpsToDrive]);
-
   // --- Load persisted state ---
   useEffect(() => {
     const loaded = loadFromStorage<Conversation[]>("gc_conversations", []);
     setSettings(loadFromStorage("gc_settings", DEFAULT_SETTINGS));
     setConversations(loaded);
     setActiveConvId(loadFromStorage("gc_activeConv", null));
-    setFollowUps(loadFromStorage<FollowUp[]>("gc_followups", []));
     setRoutines(loadFromStorage<Routine[]>("gc_routines", []));
     setEmailStyle(loadFromStorage<EmailStyleProfile | null>("gc_email_style", null));
 
@@ -289,23 +258,6 @@ export default function Home() {
           setSyncStatus("idle");
         }
 
-        // Pull follow-ups from Drive
-        try {
-          const fuRes = await fetch("/api/followups/sync");
-          if (fuRes.ok) {
-            const fuData = await fuRes.json();
-            if (fuData.driveFileId) followUpDriveFileIdRef.current = fuData.driveFileId;
-            if (fuData.followUps && Array.isArray(fuData.followUps) && fuData.followUps.length > 0) {
-              skipNextFollowUpSync.current = true;
-              setFollowUps((prev) => {
-                const merged = mergeFollowUpsLocal(prev, fuData.followUps);
-                saveToStorage("gc_followups", merged);
-                return merged;
-              });
-            }
-          }
-        } catch { /* silent — follow-up sync is non-critical */ }
-
         initialLoadDone.current = true;
       })();
     } else {
@@ -322,12 +274,14 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!initialLoadDone.current) return;
     saveToStorage("gc_settings", settings);
   }, [settings]);
 
   useEffect(() => {
+    if (!initialLoadDone.current) return;
     saveToStorage("gc_conversations", conversations);
-    if (initialLoadDone.current && conversations.length > 0) {
+    if (conversations.length > 0) {
       if (skipNextSync.current) {
         skipNextSync.current = false;
         return;
@@ -340,27 +294,17 @@ export default function Home() {
   }, [conversations, backupToServer, scheduleDriveSync, settings.driveSyncEnabled]);
 
   useEffect(() => {
+    if (!initialLoadDone.current) return;
     saveToStorage("gc_activeConv", activeConvId);
   }, [activeConvId]);
 
   useEffect(() => {
-    saveToStorage("gc_followups", followUps);
-    if (initialLoadDone.current) {
-      if (skipNextFollowUpSync.current) {
-        skipNextFollowUpSync.current = false;
-        return;
-      }
-      if (settings.driveSyncEnabled) {
-        scheduleFollowUpSync();
-      }
-    }
-  }, [followUps, scheduleFollowUpSync, settings.driveSyncEnabled]);
-
-  useEffect(() => {
+    if (!initialLoadDone.current) return;
     saveToStorage("gc_routines", routines);
   }, [routines]);
 
   useEffect(() => {
+    if (!initialLoadDone.current) return;
     if (emailStyle) saveToStorage("gc_email_style", emailStyle);
   }, [emailStyle]);
 
@@ -781,9 +725,6 @@ export default function Home() {
     [activeConvId],
   );
 
-  const followUpCount = followUps.filter((f) => f.status === "pending").length;
-  const draftCount = 0;
-
   const showDashboard = !activeConvId;
 
   return (
@@ -814,51 +755,76 @@ export default function Home() {
         theme={theme}
         onToggleTheme={toggleTheme}
         syncStatus={syncStatus}
-        followUpCount={followUpCount}
-        draftCount={draftCount}
       />
 
-      {showDashboard ? (
-        <DashboardView
-          settings={settings}
-          followUps={followUps}
-          onFollowUpsUpdate={setFollowUps}
-          routines={routines}
-          onRoutinesUpdate={setRoutines}
-          onRunRoutineNow={handleRunRoutineNow}
-          emailStyle={emailStyle}
-          onStyleUpdate={setEmailStyle}
-          onBriefingItemClick={(text) => {
-            const id = createConversation();
-            setActiveConvId(id);
-            setInputValue(text);
-          }}
-          onOpenConversation={(id) => setActiveConvId(id)}
+      <div className="flex-1 flex overflow-hidden">
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          {showDashboard ? (
+            <DashboardView
+              settings={settings}
+              routines={routines}
+              onRoutinesUpdate={setRoutines}
+              onRunRoutineNow={handleRunRoutineNow}
+              onBriefingItemClick={(text) => {
+                const id = createConversation();
+                setActiveConvId(id);
+                setInputValue(text);
+              }}
+          onOpenThread={(tid) => setActiveThreadId(tid)}
+          activeThreadId={activeThreadId}
           scrollToSection={scrollToSection}
-          onScrollHandled={() => setScrollToSection(null)}
-          scrollToTop={dashScrollTop}
-        />
-      ) : (
-        <ChatInterface
-          messages={activeConversation?.messages || []}
-          conversation={activeConversation || null}
-          onSendMessage={handleSendMessage}
-          onRename={(title) => activeConvId && handleRenameConversation(activeConvId, title)}
-          onToggleStar={() => activeConvId && handleToggleStar(activeConvId)}
-          onArchive={() => activeConvId && handleArchiveConversation(activeConvId)}
-          onDelete={activeConversation?.archived ? () => activeConvId && handleDeleteConversation(activeConvId) : undefined}
-          onRestore={activeConversation?.archived ? () => activeConvId && handleRestoreConversation(activeConvId) : undefined}
-          settings={settings}
-          isStreaming={isStreaming}
-          streamContent={streamContent}
-          streamToolCalls={streamToolCalls}
-          onStopStreaming={handleStopStreaming}
-          onOpenSettings={() => setSettingsOpen(true)}
-          gogInstalled={gogStatus?.installed ?? false}
-          inputValue={inputValue}
-          onInputChange={setInputValue}
-        />
-      )}
+              onScrollHandled={() => setScrollToSection(null)}
+              scrollToTop={dashScrollTop}
+              removedThreadId={removedThreadId}
+              onRemovedThreadHandled={() => setRemovedThreadId(null)}
+            />
+          ) : (
+            <ChatInterface
+              messages={activeConversation?.messages || []}
+              conversation={activeConversation || null}
+              onSendMessage={handleSendMessage}
+              onRename={(title) => activeConvId && handleRenameConversation(activeConvId, title)}
+              onToggleStar={() => activeConvId && handleToggleStar(activeConvId)}
+              onArchive={() => activeConvId && handleArchiveConversation(activeConvId)}
+              onDelete={activeConversation?.archived ? () => activeConvId && handleDeleteConversation(activeConvId) : undefined}
+              onRestore={activeConversation?.archived ? () => activeConvId && handleRestoreConversation(activeConvId) : undefined}
+              settings={settings}
+              isStreaming={isStreaming}
+              streamContent={streamContent}
+              streamToolCalls={streamToolCalls}
+              onStopStreaming={handleStopStreaming}
+              onOpenSettings={() => setSettingsOpen(true)}
+              gogInstalled={gogStatus?.installed ?? false}
+              inputValue={inputValue}
+              onInputChange={setInputValue}
+            />
+          )}
+        </div>
+
+        {activeThreadId && (
+          <div className="shrink-0 relative flex" style={{ width: emailPanelWidth }}>
+            <div
+              className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-10 hover:bg-accent/30 active:bg-accent/40 transition-colors"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                resizingRef.current = true;
+                document.body.style.cursor = "col-resize";
+                document.body.style.userSelect = "none";
+              }}
+            />
+            <div className="flex-1 min-w-0">
+              <EmailThreadPanel
+                threadId={activeThreadId}
+                onClose={() => setActiveThreadId(null)}
+                onOpenSettings={() => setSettingsOpen(true)}
+                settings={settings}
+                emailStyle={emailStyle}
+                onThreadAction={(tid) => { setRemovedThreadId(tid); setActiveThreadId(null); }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
 
       <SettingsPanel
         open={settingsOpen}
@@ -874,6 +840,26 @@ export default function Home() {
             .then((r) => r.json())
             .then(setGogStatus)
             .catch(() => {});
+        }}
+        emailStyle={emailStyle}
+        onStyleUpdate={setEmailStyle}
+        onRestoreFromDrive={async (folderId: string) => {
+          const res = await fetch("/api/conversations/sync/restore", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ folderId }),
+          });
+          if (!res.ok) throw new Error("Restore failed");
+          const data = await res.json();
+          const remote = data.conversations || [];
+          if (remote.length > 0) {
+            setConversations((prev) => {
+              const merged = mergeLocal(prev, remote);
+              saveToStorage("gc_conversations", merged);
+              return merged;
+            });
+          }
+          return remote.length;
         }}
       />
 
