@@ -2,14 +2,14 @@
 
 **Your Google Workspace, one screen away.**
 
-Gog Chat is a **locally-run** AI-powered dashboard and chat assistant for Gmail, Calendar, Drive, Sheets, Docs, Tasks, and Contacts. It shows you what matters each morning, helps you draft replies, tracks follow-ups, and lets you talk to your Google Workspace in plain English.
+Gog Chat is a **locally-run** AI-powered dashboard and chat assistant for Gmail, Calendar, Drive, Sheets, Docs, Tasks, and Contacts. It shows you what matters each morning, helps you draft replies in a dedicated email sidebar, and lets you talk to your Google Workspace in plain English.
 
 Runs on your machine. Your credentials and API keys never leave your computer. Built with [Next.js](https://nextjs.org), [Claude](https://anthropic.com), and the [gog CLI](https://github.com/steipete/gogcli).
 
 <p align="center">
   <img src="docs/screenshots/hero.png" alt="Gog Chat dashboard" width="720" />
 </p>
-<p align="center"><em>The dashboard — your inbox, calendar, recent files, follow-ups, drafts, and routines in one view.</em></p>
+<p align="center"><em>The dashboard — your inbox, calendar, recent files, scheduled routines, and activity recap in one view.</em></p>
 
 ### 🔗 [Live Demo](https://gog-chat-site.onrender.com/)
 
@@ -25,10 +25,9 @@ When you open Gog Chat, you land on a single scrollable dashboard with everythin
 
 | Section | What it shows |
 |---------|--------------|
-| **Daily Briefing** | Your inbox, today's calendar events (with durations), and recently opened files — each linking out to the real thing in Gmail, Calendar, or Drive |
-| **Follow-up Tracker** | AI-scanned email threads that need your attention — filtered to real conversations, not automated noise |
-| **Email Drafts** | Important unread emails that need a reply, with AI-generated drafts that match your writing style |
-| **Routines** | Custom instructions you set to run on a schedule or as a one-off in the future |
+| **Daily Briefing** | Your inbox, today's calendar events (with Google Meet links and descriptions), and recently opened files — each linking out to the real thing in Gmail, Calendar, or Drive |
+| **Email Thread Sidebar** | Click any inbox email to open a full thread view with reply, auto-draft, archive, snooze, and spam actions |
+| **Routines** | Custom instructions you set to run on a schedule or as a one-off in the future — with AI-generated routine suggestions |
 | **Activity Recap** | AI-summarized view of what you did this week or any past week/month — emails sent, files worked on, meetings attended |
 
 The sidebar lets you jump to any section, search across conversations and Google services, or open a chat.
@@ -50,18 +49,19 @@ Click **+ New Chat** or select a conversation to switch to the full chat interfa
 
 ### Highlights
 
-- **Dashboard-first** — see your inbox, calendar, follow-ups, and drafts without typing anything
-- **AI-filtered email drafts** — the LLM decides which emails actually need a reply, learns your writing style from your sent emails, and generates drafts that sound like you
-- **Follow-up tracking** — AI scans your inbox for important threads from real people that need attention, filtering out automated messages
+- **Dashboard-first** — see your inbox, calendar, and recent files without typing anything
+- **Email thread sidebar** — click any email to view the full thread, reply with auto-draft, archive, snooze, or mark as spam
+- **AI writing style analysis** — learns your writing style from sent emails and generates drafts that sound like you
+- **Smart calendar tooltips** — see Google Meet links, event descriptions, attendee status, and external participant indicators
 - **Activity recaps** — pick any week or month and get an AI-generated summary of what you accomplished
-- **Scheduled routines** — set up repeating or one-time AI tasks (e.g. "summarize my unread emails every morning")
+- **Scheduled routines** — set up repeating or one-time AI tasks with LLM-generated suggestions (e.g. "summarize my unread emails every morning")
 - **Conversational chat** — describe what you need in natural language and watch it happen in real time
 - **Unified search** — search your conversations and Google services from one input in the sidebar
 - **Quick-search panel** — click any service icon to browse your 20 most recently opened items, filter, and search
 - **Conversation management** — star, rename, archive, and restore chats; empty conversations auto-clean
-- **Google Drive sync** — conversations are backed up to a `GogChat` folder in your Drive
+- **Google Drive sync & recovery** — conversations are backed up to a `GogChat` folder in your Drive with recovery from folder links
 - **Light & dark mode** — toggle from the sidebar
-- **Configurable models** — defaults to Claude Opus 4.6, supports all Claude models + custom model IDs
+- **Dual model configuration** — primary model for chat/drafting, background model for cost-effective suggestions and analysis
 - **Fully local** — your API key is stored in your browser and sent only to Anthropic's API
 
 <p align="center">
@@ -177,13 +177,13 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ### Step 5 — Add your Anthropic API key
 
 1. Still in Settings, paste your **Anthropic API key**
-2. (Optional) Choose a different Claude model
+2. (Optional) Choose different Claude models for primary use and background tasks
 3. Start chatting!
 
 <p align="center">
   <img src="docs/screenshots/settings.png" alt="Settings panel showing gog CLI status, API key, and model selection" width="520" />
 </p>
-<p align="center"><em>Settings panel — configure your Google account, API key, and Claude model. The gog CLI status is detected automatically.</em></p>
+<p align="center"><em>Settings panel — configure your Google account, API key, primary/background models, and Drive recovery. The gog CLI status is detected automatically.</em></p>
 
 ---
 
@@ -205,10 +205,11 @@ Here are some things you can say:
 
 ### Dashboard features
 
-- **Briefing** — opens automatically on launch. Each item links directly to Gmail, Calendar, or Drive. Archive emails with the hover button.
-- **Follow-ups** — hit refresh to scan your inbox. The AI focuses on real conversations (sales, partnerships, colleagues) and ignores automated messages.
-- **Drafts** — shows important unread emails that need a reply. Click "Generate Draft" to get a reply that matches your writing style. Expand "Your Writing Style" to review or edit what the AI learned.
-- **Routines** — add instructions like "Summarize my unread emails" with a schedule (daily, weekly, or one-time). They run automatically or on demand.
+- **Briefing** — opens automatically on launch. Each item links directly to Gmail, Calendar, or Drive. Click inbox emails to open them in the thread sidebar. Archive emails with the hover button.
+- **Email Thread Sidebar** — click any inbox email to view the full conversation thread. Reply with auto-draft (learns your writing style), archive, snooze, or mark as spam without leaving the dashboard.
+- **Calendar Events** — hover over events to see Google Meet links, event descriptions, attendee lists with RSVP status, and external participant indicators.
+- **Routines** — add instructions like "Summarize my unread emails" with a schedule (daily, weekly, or one-time). Get AI-generated routine suggestions for inspiration.
+- **Writing Style** — accessible in Settings. The AI analyzes your sent emails to learn your writing style and generates drafts that sound like you.
 - **Recap** — pick a timeframe (this week, last month, custom range) and get an AI-generated summary of your activity.
 
 ### Quick-search panel
@@ -244,20 +245,26 @@ Gog-Chat/
 │   │       ├── services/route.ts # Quick-search: recent items + search
 │   │       ├── briefing/route.ts # Daily briefing: inbox, calendar, files
 │   │       ├── recap/route.ts    # AI-generated activity recaps
-│   │       ├── followups/route.ts # AI-scanned follow-up suggestions
+│   │       ├── suggestions/route.ts # AI-generated chat conversation suggestions
+│   │       ├── routine-suggestions/route.ts # AI-generated routine ideas
 │   │       ├── drafts/route.ts   # Email draft generation + style analysis
 │   │       ├── auth/route.ts     # In-app Google OAuth flow
+│   │       ├── email/
+│   │       │   └── preview/route.ts # Email thread preview and full content
 │   │       └── conversations/
 │   │           ├── backup/route.ts  # Local file backup
-│   │           └── sync/route.ts    # Google Drive sync
+│   │           └── sync/
+│   │               ├── route.ts     # Google Drive sync
+│   │               └── restore/route.ts # Drive folder recovery
 │   ├── components/
-│   │   ├── DashboardView.tsx     # Dashboard — briefing, follow-ups, drafts, routines, recap
+│   │   ├── DashboardView.tsx     # Dashboard — briefing, routines, recap with routine suggestions
+│   │   ├── EmailThreadPanel.tsx  # Email sidebar — full thread view, reply, actions
 │   │   ├── ChatInterface.tsx     # Chat area + input + conversation controls
 │   │   ├── MessageBubble.tsx     # Message rendering + markdown
 │   │   ├── Sidebar.tsx           # Navigation, search, conversation list
 │   │   ├── ServicePanel.tsx      # Quick-search modal per service
 │   │   ├── UnifiedSearchPanel.tsx # Cross-service search modal
-│   │   └── SettingsPanel.tsx     # API key, model, advanced config
+│   │   └── SettingsPanel.tsx     # API key, models, writing style, Drive recovery
 │   └── lib/
 │       ├── gog.ts                # gog CLI wrapper (execFile)
 │       ├── tools.ts              # Claude tool definitions + system prompt
@@ -281,7 +288,7 @@ Gog-Chat/
 5. Results stream back to Claude, which can run more commands or compose a final response
 6. Everything streams to the browser in real time via Server-Sent Events
 
-Dashboard features (briefing, follow-ups, drafts, recaps) work similarly — each has a dedicated API route that runs `gog` commands to fetch data from Google, then uses the LLM to filter, classify, or summarize the results.
+Dashboard features (briefing, routine suggestions, recaps, email thread sidebar) work similarly — each has a dedicated API route that runs `gog` commands to fetch data from Google, then uses the LLM to filter, classify, or summarize the results.
 
 Conversations are saved to `localStorage`, backed up to a local file on the server, and synced to a `GogChat` folder in your Google Drive.
 
@@ -301,14 +308,16 @@ All settings are accessible from the gear icon in the sidebar:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | **API Key** | — | Your Anthropic API key (required) |
-| **Model** | `claude-opus-4-6` | Which Claude model to use |
+| **Primary Model** | `claude-opus-4-6` | Model for chat conversations and email drafting |
+| **Background Model** | `claude-haiku-4-5-20251001` | Lighter model for suggestions, recaps, and analysis (cost optimization) |
 | **gog Account** | Auto-detected | Which Google account gog uses |
 | **Custom Models** | — | Add any model ID (e.g. for new releases) |
 | **Max Tokens** | 16,384 | Maximum tokens per LLM response |
-| **Max Tool Iterations** | 25 | How many tool calls the LLM can chain |
-| **Context Window** | 200,000 chars | Conversation history limit before trimming |
+| **Max Tool Iterations** | 40 | How many tool calls the LLM can chain |
+| **Context Window** | 180,000 chars | Conversation history limit before trimming |
 | **Custom System Prompt** | — | Prepended to the default system prompt |
 | **Drive Sync** | Enabled | Toggle automatic Google Drive backup |
+| **Drive Recovery** | — | Recover conversations from a Drive folder link |
 
 ---
 
@@ -336,8 +345,8 @@ Make sure the Google Drive API is enabled and gog is authorized. Check the sync 
 ### Claude responses cut off
 Very long conversations may exceed context limits. Start a new conversation for fresh context, or switch to a model with a larger window.
 
-### Follow-ups or drafts showing irrelevant emails
-These features use the LLM to filter automated messages. If you see calendar invites or notifications slipping through, hit refresh — the LLM classification improves with clearer context from fresh data.
+### Lost conversations after update
+If your conversations disappeared, check Settings → Drive Sync → "Recover conversations from Drive". Paste your original GogChat folder link from Google Drive to restore your conversation history.
 
 ---
 
