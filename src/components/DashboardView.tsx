@@ -1183,7 +1183,17 @@ export default function DashboardView({
                                 <div className="flex items-center gap-2">
                                   <p className={`text-xs truncate flex-1 ${isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
                                   {hasMeet && (
-                                    <Video size={11} className="shrink-0 text-google-blue" title="Has meeting link" />
+                                    <a
+                                      href={item.meetUrl}
+                                      target="_blank"
+                                      rel="noopener"
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-google-blue/10 hover:bg-google-blue/20 border border-google-blue/20 text-google-blue transition-colors"
+                                      title={item.meetUrl}
+                                    >
+                                      <Video size={10} />
+                                      <span className="text-[9px] font-medium">Join</span>
+                                    </a>
                                   )}
                                   {hasExternal && (
                                     <span className="text-[9px] font-medium text-google-yellow bg-google-yellow/10 border border-google-yellow/20 px-1.5 py-0.5 rounded-full shrink-0">
