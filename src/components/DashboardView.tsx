@@ -1171,10 +1171,11 @@ export default function DashboardView({
                             onMouseEnter={() => hasTooltipData && setHoveredEventId(item.id)}
                             onMouseLeave={() => setHoveredEventId(null)}
                           >
-                            <a
-                              href={item.url || "https://calendar.google.com"}
-                              target="_blank"
-                              rel="noopener"
+                            <div
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => window.open(item.url || "https://calendar.google.com", "_blank", "noopener")}
+                              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); window.open(item.url || "https://calendar.google.com", "_blank", "noopener"); } }}
                               className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${
                                 isSoon ? "bg-accent/10 border border-accent/25 ring-1 ring-accent/15" : ""
                               }`}
@@ -1220,7 +1221,7 @@ export default function DashboardView({
                                 )}
                               </div>
                               <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
-                            </a>
+                            </div>
 
                             {hasTooltipData && hoveredEventId === item.id && (
                               <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-bg-secondary border border-border rounded-xl shadow-xl p-3 space-y-2 min-w-[260px]"
