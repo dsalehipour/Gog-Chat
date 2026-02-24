@@ -1150,8 +1150,10 @@ export default function DashboardView({
                         const hasMeet = !!item.meetUrl;
                         const hasDescription = !!item.description;
                         const hasTooltipData = hasAttendees || hasMeet || hasDescription;
+                        const eventEnd = item.endTime ? new Date(item.endTime).getTime() : 0;
                         const minsUntilStart = eventStart ? Math.round((eventStart - now) / 60000) : Infinity;
-                        const isSoon = isToday && minsUntilStart >= 0 && minsUntilStart <= 15;
+                        const isHappening = isToday && eventStart > 0 && eventEnd > 0 && now >= eventStart && now < eventEnd;
+                        const isSoon = isToday && (isHappening || (minsUntilStart >= 0 && minsUntilStart <= 15));
 
                         let hasExternal = false;
                         if (hasAttendees) {
@@ -1202,8 +1204,8 @@ export default function DashboardView({
                                     </span>
                                   )}
                                   {isSoon && (
-                                    <span className="text-[9px] font-semibold text-accent bg-accent/15 px-1.5 py-0.5 rounded-full shrink-0 animate-pulse">
-                                      {minsUntilStart <= 1 ? "Now" : `${minsUntilStart}m`}
+                                    <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${isHappening ? "text-success bg-success/15" : "text-accent bg-accent/15 animate-pulse"}`}>
+                                      {isHappening ? "Now" : minsUntilStart <= 1 ? "Starting" : `${minsUntilStart}m`}
                                     </span>
                                   )}
                                   {item.detail && <span className="text-xs font-semibold text-accent shrink-0">{item.detail}</span>}
