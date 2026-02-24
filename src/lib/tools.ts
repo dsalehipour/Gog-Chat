@@ -79,6 +79,7 @@ export const GOG_TOOLS: Tool[] = [
       "['read', '<id>', \"'Sheet Name'!A1:Z100\", '--json'] to read data (quote sheet names with spaces!), " +
       "['update', '<id>', \"'Sheet1'!A1:C1\", '--values-json', '[[\"val1\",\"val2\",\"val3\"]]'] to write 1 row of 3 cells, " +
       "['update', '<id>', \"'Sheet1'!A1:B2\", '--values-json', '[[\"r1c1\",\"r1c2\"],[\"r2c1\",\"r2c2\"]]'] to write 2x2, " +
+      "['update', '<id>', \"'Sheet1'!E2:E2\", '--values-json', '[[\"=SUM(A2:D2)\"]]', '--value-input-option', 'USER_ENTERED'] to write a formula, " +
       "['export', '<id>', '--format', 'pdf', '--out', './sheet.pdf'] to export.",
     input_schema: {
       type: "object" as const,
@@ -241,6 +242,21 @@ For every user request, follow this loop:
   - 2 rows, 2 cols: range \`A1:B2\`, values \`[["r1c1","r1c2"],["r2c1","r2c2"]]\`
 - Example: \`update <id> 'Sheet'!D5:F5 --values-json '[["100","200","300"]]'\`
 - If a write fails with "tried writing to row X", your range doesn't match your data dimensions — fix the range.
+- Use \`--value-input-option USER_ENTERED\` when writing formulas so Sheets interprets them (default is RAW which treats everything as literal text).
+
+## Sheets — Formulas (IMPORTANT)
+- When writing values that involve calculations, references, or aggregations, ALWAYS prefer Google Sheets formulas over hardcoded values. The spreadsheet should remain dynamic, not static.
+- Write formulas like a spreadsheet expert would: use =SUM, =AVERAGE, =IF, =VLOOKUP, =INDEX/MATCH, =COUNTIF, =SUMIF, =ARRAYFORMULA, etc.
+- Examples of when to use formulas:
+  - User says "total up column B" → write \`=SUM(B2:B100)\`, NOT the calculated number
+  - User says "calculate profit" → write \`=C2-D2\` referencing revenue and cost cells, NOT a static result
+  - User says "add a percentage column" → write \`=B2/B$1\` or similar relative formulas, NOT computed percentages
+  - User says "find the average" → write \`=AVERAGE(range)\`, NOT the computed average
+  - User says "add a status column based on value" → write \`=IF(B2>100,"High","Low")\`, NOT the literal text
+- When filling formulas down multiple rows, adjust cell references per row (e.g. row 2 gets =A2*B2, row 3 gets =A3*B3).
+- Only use raw/hardcoded values when the user is providing specific literal data (names, dates, labels) that aren't derived from other cells.
+- When writing formulas, ALWAYS include \`--value-input-option\`, \`USER_ENTERED\` as separate args so Sheets parses the formula.
+  Example: \`['update', '<id>', "'Sheet'!E2:E2", '--values-json', '[["=SUM(A2:D2)"]]', '--value-input-option', 'USER_ENTERED']\`
 
 ## Follow-up Detection
 When you encounter emails with unanswered questions, meetings with action items, or tasks with approaching deadlines, suggest them as follow-ups by including this exact format on its own line:
