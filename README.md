@@ -1,6 +1,6 @@
 # Gog Chat
 
-**Your Google Workspace, one screen away.**
+**Your Google Workspace, all controllable via an LLM chat.**
 
 Gog Chat is a **locally-run** AI-powered dashboard and chat assistant for Gmail, Calendar, Drive, Sheets, Docs, Tasks, and Contacts. It shows you what matters each morning, helps you draft replies in a dedicated email sidebar, and lets you talk to your Google Workspace in plain English.
 
