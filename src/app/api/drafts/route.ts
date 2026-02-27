@@ -316,7 +316,7 @@ async function sendDraft(body: {
       `Re: ${subject}`,
       "--body",
       draftText,
-      "--thread",
+      "--thread-id",
       threadId,
     ],
     account,
