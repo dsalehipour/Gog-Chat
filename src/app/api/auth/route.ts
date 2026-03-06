@@ -4,6 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { gogBin } from "@/lib/gog";
 
 const execFileAsync = promisify(execFile);
 
@@ -43,7 +44,7 @@ export async function POST(request: Request) {
 
 async function checkCredentials(): Promise<NextResponse> {
   try {
-    const result = await execFileAsync("gog", ["auth", "credentials", "list"], {
+    const result = await execFileAsync(gogBin(), ["auth", "credentials", "list"], {
       timeout: 10_000,
     });
     const hasCredentials = result.stdout.trim().length > 0 && !result.stdout.includes("No credentials");
@@ -79,7 +80,7 @@ async function storeCredentials(credentialsJson: string): Promise<NextResponse> 
   try {
     await writeFile(tmpPath, credentialsJson, "utf-8");
 
-    const result = await execFileAsync("gog", ["auth", "credentials", tmpPath], {
+    const result = await execFileAsync(gogBin(), ["auth", "credentials", tmpPath], {
       timeout: 15_000,
     });
 
@@ -89,7 +90,13 @@ async function storeCredentials(credentialsJson: string): Promise<NextResponse> 
       output: result.stdout.trim(),
     });
   } catch (error) {
-    const err = error as { stderr?: string; message?: string };
+    const err = error as { code?: string; stderr?: string; message?: string };
+    if (err.code === "ENOENT" || err.message?.includes("ENOENT")) {
+      return NextResponse.json(
+        { error: "The gog CLI is not installed. Install it first with: brew install steipete/tap/gogcli — then refresh this page." },
+        { status: 500 },
+      );
+    }
     return NextResponse.json(
       { error: `Failed to store credentials: ${err.stderr || err.message}` },
       { status: 500 },
@@ -121,7 +128,7 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
 
   try {
     // gog auth add opens a browser for OAuth consent
-    const result = await execFileAsync("gog", ["auth", "add", email], {
+    const result = await execFileAsync(gogBin(), ["auth", "add", email], {
       timeout: 120_000,
       env: { ...process.env },
     });
@@ -132,9 +139,13 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
       output: result.stdout.trim(),
     });
   } catch (error) {
-    const err = error as { stdout?: string; stderr?: string; message?: string };
-    // If gog opened a browser and is waiting, the timeout may fire
-    // but the auth might still succeed
+    const err = error as { code?: string; stdout?: string; stderr?: string; message?: string };
+    if (err.code === "ENOENT" || err.message?.includes("ENOENT")) {
+      return NextResponse.json(
+        { error: "The gog CLI is not installed. Install it first with: brew install steipete/tap/gogcli — then refresh this page." },
+        { status: 500 },
+      );
+    }
     if (err.stdout?.includes("authorized") || err.stdout?.includes("success")) {
       return NextResponse.json({
         success: true,
