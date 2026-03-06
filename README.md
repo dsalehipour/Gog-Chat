@@ -112,7 +112,7 @@ gog --version
 
 ### Step 2 — Create a Google Cloud project & OAuth credentials
 
-This gives gog permission to access your Google Workspace on your behalf. It takes about 5 minutes.
+> **Don't skip this step.** Gog Chat needs a Google Cloud project with OAuth credentials and individually enabled APIs to access your Google Workspace. This is a one-time setup that takes about 5–10 minutes.
 
 #### 2a. Create a project
 
@@ -123,18 +123,22 @@ This gives gog permission to access your Google Workspace on your behalf. It tak
 
 #### 2b. Enable the APIs
 
-Go to **APIs & Services → Library** and enable each of these (click into each one and hit **Enable**):
+> **This step is required.** Gog Chat talks to multiple Google services. Each one has its own API that must be individually enabled in your Cloud project, or you'll get "API access denied" / 403 errors when the app tries to use that service.
 
-- [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
-- [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
-- [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-- [Google Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
-- [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)
-- [Google Slides API](https://console.cloud.google.com/apis/library/slides.googleapis.com)
-- [Google Tasks API](https://console.cloud.google.com/apis/library/tasks.googleapis.com)
-- [People API](https://console.cloud.google.com/apis/library/people.googleapis.com) (for Contacts)
+Go to **APIs & Services → Library** in your Google Cloud project. For **each** API below, click the link, make sure your project is selected in the dropdown at the top, and hit **Enable**:
 
-> **Tip:** You can paste each link directly into your browser while your project is selected — it'll take you right to the enable page.
+| # | API | What it's used for |
+|---|-----|--------------------|
+| 1 | [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com) | Inbox, sending, drafts, labels |
+| 2 | [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com) | Events, availability, scheduling |
+| 3 | [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com) | File browsing, search, conversation sync |
+| 4 | [Google Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com) | Reading & writing spreadsheets |
+| 5 | [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com) | Exporting documents |
+| 6 | [Google Slides API](https://console.cloud.google.com/apis/library/slides.googleapis.com) | Exporting presentations |
+| 7 | [Google Tasks API](https://console.cloud.google.com/apis/library/tasks.googleapis.com) | Task lists and items |
+| 8 | [People API](https://console.cloud.google.com/apis/library/people.googleapis.com) | Contacts |
+
+> **Important:** You must enable **all 8 APIs**. Missing even one will cause errors for that service. If you only plan to use a few services (e.g. just Gmail and Calendar), you can skip the rest — but the app will show errors if you try to use a service whose API isn't enabled.
 
 #### 2c. Configure the OAuth consent screen
 
