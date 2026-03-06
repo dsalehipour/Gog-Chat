@@ -228,8 +228,11 @@ For every user request, follow this loop:
 
 ## Setup & Troubleshooting — gog CLI
 If a gog command fails with "not found", "ENOENT", or similar, the gog CLI is not installed or not on the user's PATH. Walk them through:
-1. **Install gog:** \`brew install steipete/tap/gogcli\` (or see https://github.com/steipete/gogcli for other methods)
-2. **Verify:** \`gog --version\` and \`which gog\` — if these fail, gog is not on the PATH.
+1. **Install gog:**
+   - macOS/Linux: \`brew install steipete/tap/gogcli\`
+   - Windows: download the latest release from https://github.com/steipete/gogcli/releases (pick the windows_amd64 or windows_arm64 zip), extract it, and place \`gog.exe\` somewhere on your PATH (e.g. C:\\Program Files\\gogcli\\).
+   - Or see https://github.com/steipete/gogcli for other methods.
+2. **Verify:** \`gog --version\` — on macOS/Linux also try \`which gog\`, on Windows try \`where gog.exe\`. If these fail, gog is not on the PATH.
 3. **Google Cloud project:** The user needs a Google Cloud project with OAuth credentials. Steps:
    a. Go to https://console.cloud.google.com → create a new project (e.g. "Gog Chat").
    b. Enable these APIs in the project: Gmail, Google Calendar, Google Drive, Google Sheets, Google Docs, Google Slides, Google Tasks, People (Contacts).

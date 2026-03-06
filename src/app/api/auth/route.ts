@@ -8,6 +8,10 @@ import { gogBin } from "@/lib/gog";
 
 const execFileAsync = promisify(execFile);
 
+const GOG_NOT_FOUND_MSG = process.platform === "win32"
+  ? "The gog CLI is not installed. Download it from https://github.com/steipete/gogcli/releases, extract gog.exe, and add it to your PATH — then refresh this page."
+  : "The gog CLI is not installed. Install it first with: brew install steipete/tap/gogcli — then refresh this page.";
+
 /**
  * POST /api/auth — store client credentials and/or authorize a Google account
  *
@@ -92,10 +96,7 @@ async function storeCredentials(credentialsJson: string): Promise<NextResponse> 
   } catch (error) {
     const err = error as { code?: string; stderr?: string; message?: string };
     if (err.code === "ENOENT" || err.message?.includes("ENOENT")) {
-      return NextResponse.json(
-        { error: "The gog CLI is not installed. Install it first with: brew install steipete/tap/gogcli — then refresh this page." },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: GOG_NOT_FOUND_MSG }, { status: 500 });
     }
     return NextResponse.json(
       { error: `Failed to store credentials: ${err.stderr || err.message}` },
@@ -111,10 +112,10 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
     return NextResponse.json({ error: "Valid email required" }, { status: 400 });
   }
 
-  // Check credentials exist first
-  const configDir = process.env.HOME
-    ? join(process.env.HOME, "Library", "Application Support", "gogcli")
-    : "";
+  // Check credentials exist first — config dir varies by OS
+  const configDir = process.platform === "win32"
+    ? (process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "gogcli") : "")
+    : (process.env.HOME ? join(process.env.HOME, "Library", "Application Support", "gogcli") : "");
   if (configDir) {
     try {
       await access(join(configDir, "credentials.json"));
@@ -141,10 +142,7 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
   } catch (error) {
     const err = error as { code?: string; stdout?: string; stderr?: string; message?: string };
     if (err.code === "ENOENT" || err.message?.includes("ENOENT")) {
-      return NextResponse.json(
-        { error: "The gog CLI is not installed. Install it first with: brew install steipete/tap/gogcli — then refresh this page." },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: GOG_NOT_FOUND_MSG }, { status: 500 });
     }
     if (err.stdout?.includes("authorized") || err.stdout?.includes("success")) {
       return NextResponse.json({

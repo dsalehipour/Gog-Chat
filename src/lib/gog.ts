@@ -1,32 +1,50 @@
 import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
 import { existsSync } from "fs";
+import { join } from "path";
 
 const execFileAsync = promisify(execFile);
 
 const COMMAND_TIMEOUT = 30_000;
 
-const HOMEBREW_PATHS = [
-  "/opt/homebrew/bin/gog",   // Apple Silicon
-  "/usr/local/bin/gog",      // Intel Mac
-  "/home/linuxbrew/.linuxbrew/bin/gog",
-];
+const isWindows = process.platform === "win32";
+
+function getCandidatePaths(): string[] {
+  if (isWindows) {
+    const localAppData = process.env.LOCALAPPDATA || "";
+    const userProfile = process.env.USERPROFILE || "";
+    return [
+      ...(localAppData ? [join(localAppData, "Programs", "gogcli", "gog.exe")] : []),
+      ...(userProfile ? [
+        join(userProfile, "gog.exe"),
+        join(userProfile, "Downloads", "gog.exe"),
+      ] : []),
+      "C:\\Program Files\\gogcli\\gog.exe",
+      "C:\\Program Files (x86)\\gogcli\\gog.exe",
+    ];
+  }
+  return [
+    "/opt/homebrew/bin/gog",   // Apple Silicon
+    "/usr/local/bin/gog",      // Intel Mac
+    "/home/linuxbrew/.linuxbrew/bin/gog",
+  ];
+}
 
 function resolveGogPath(): string {
-  // Try `which gog` first (works if PATH is correct)
+  const whichCmd = isWindows ? "where" : "which";
+  const binName = isWindows ? "gog.exe" : "gog";
+
   try {
-    const result = execFileSync("which", ["gog"], { timeout: 3000, encoding: "utf-8" });
-    const p = result.trim();
+    const result = execFileSync(whichCmd, [binName], { timeout: 3000, encoding: "utf-8" });
+    const p = result.trim().split(/\r?\n/)[0];
     if (p) return p;
   } catch { /* not on PATH */ }
 
-  // Check common Homebrew install locations
-  for (const p of HOMEBREW_PATHS) {
+  for (const p of getCandidatePaths()) {
     if (existsSync(p)) return p;
   }
 
-  // Fall back to bare name — will produce a clear ENOENT if missing
-  return "gog";
+  return binName;
 }
 
 let _gogBin: string | null = null;

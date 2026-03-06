@@ -92,11 +92,17 @@ Before you start, you'll need three things:
 
 ### Step 1 — Install the gog CLI
 
+**macOS / Linux (Homebrew):**
+
 ```bash
 brew install steipete/tap/gogcli
 ```
 
-> No Homebrew? See the [gog CLI repo](https://github.com/steipete/gogcli) for other install methods.
+**Windows:**
+
+Download the latest release from the [gog CLI releases page](https://github.com/steipete/gogcli/releases) — pick `gogcli_*_windows_amd64.zip` (or `arm64`), extract it, and place `gog.exe` somewhere on your PATH (e.g. `C:\Program Files\gogcli\`).
+
+> See the [gog CLI repo](https://github.com/steipete/gogcli) for other install methods.
 
 Verify it's installed:
 
