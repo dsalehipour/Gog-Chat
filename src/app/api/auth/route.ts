@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { writeFile, unlink, access } from "fs/promises";
+import { writeFile, unlink } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
 import { execFile } from "child_process";
@@ -114,19 +114,23 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
     return NextResponse.json({ error: "Valid email required" }, { status: 400 });
   }
 
-  // Check credentials exist first — config dir varies by OS
-  const configDir = process.platform === "win32"
-    ? (process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, "gogcli") : "")
-    : (process.env.HOME ? join(process.env.HOME, "Library", "Application Support", "gogcli") : "");
-  if (configDir) {
-    try {
-      await access(join(configDir, "credentials.json"));
-    } catch {
+  // Verify credentials exist by asking gog directly (works cross-platform)
+  try {
+    const check = await execFileAsync(gogBin(), ["auth", "credentials", "list"], {
+      timeout: 10_000,
+      env: gogEnv(),
+    });
+    if (!check.stdout.trim() || check.stdout.includes("No credentials")) {
       return NextResponse.json(
         { error: "No OAuth credentials found. Upload your client_secret JSON first." },
         { status: 400 },
       );
     }
+  } catch {
+    return NextResponse.json(
+      { error: "No OAuth credentials found. Upload your client_secret JSON first." },
+      { status: 400 },
+    );
   }
 
   try {
