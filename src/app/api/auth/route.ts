@@ -4,7 +4,7 @@ import { join } from "path";
 import { tmpdir } from "os";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { gogBin } from "@/lib/gog";
+import { gogBin, gogEnv } from "@/lib/gog";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,6 +50,7 @@ async function checkCredentials(): Promise<NextResponse> {
   try {
     const result = await execFileAsync(gogBin(), ["auth", "credentials", "list"], {
       timeout: 10_000,
+      env: gogEnv(),
     });
     const hasCredentials = result.stdout.trim().length > 0 && !result.stdout.includes("No credentials");
     return NextResponse.json({ hasCredentials, output: result.stdout.trim() });
@@ -86,6 +87,7 @@ async function storeCredentials(credentialsJson: string): Promise<NextResponse> 
 
     const result = await execFileAsync(gogBin(), ["auth", "credentials", tmpPath], {
       timeout: 15_000,
+      env: gogEnv(),
     });
 
     return NextResponse.json({
@@ -131,7 +133,7 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
     // gog auth add opens a browser for OAuth consent
     const result = await execFileAsync(gogBin(), ["auth", "add", email], {
       timeout: 120_000,
-      env: { ...process.env },
+      env: gogEnv(),
     });
 
     return NextResponse.json({
@@ -144,11 +146,12 @@ async function authorizeAccount(email: string): Promise<NextResponse> {
     if (err.code === "ENOENT" || err.message?.includes("ENOENT")) {
       return NextResponse.json({ error: GOG_NOT_FOUND_MSG }, { status: 500 });
     }
-    if (err.stdout?.includes("authorized") || err.stdout?.includes("success")) {
+    const combined = `${err.stdout || ""} ${err.stderr || ""}`;
+    if (combined.includes("Authorization received") || combined.includes("authorized") || err.stdout?.includes("success")) {
       return NextResponse.json({
         success: true,
-        message: `Account ${email} authorized`,
-        output: err.stdout.trim(),
+        message: `Account ${email} authorized successfully`,
+        output: (err.stdout || "").trim(),
       });
     }
     return NextResponse.json(

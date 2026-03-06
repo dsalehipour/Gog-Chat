@@ -2,10 +2,33 @@ import { execFile, execFileSync } from "child_process";
 import { promisify } from "util";
 import { existsSync } from "fs";
 import { join } from "path";
+import { createHash } from "crypto";
+import { hostname, userInfo } from "os";
 
 const execFileAsync = promisify(execFile);
 
 const COMMAND_TIMEOUT = 30_000;
+
+function deriveKeyringPassword(): string {
+  if (process.env.GOG_KEYRING_PASSWORD) return process.env.GOG_KEYRING_PASSWORD;
+  const seed = `gogchat-${hostname()}-${userInfo().username}`;
+  return createHash("sha256").update(seed).digest("hex").slice(0, 32);
+}
+
+const KEYRING_PASSWORD = deriveKeyringPassword();
+
+export function gogEnv(extra?: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    GOG_KEYRING_PASSWORD: KEYRING_PASSWORD,
+  };
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      env[k] = v;
+    }
+  }
+  return env;
+}
 
 const isWindows = process.platform === "win32";
 
@@ -77,10 +100,7 @@ export async function runGogCommand(
   try {
     const { stdout, stderr } = await execFileAsync(gogBin(), fullArgs, {
       timeout: COMMAND_TIMEOUT,
-      env: {
-        ...process.env,
-        ...(account ? { GOG_ACCOUNT: account } : {}),
-      },
+      env: gogEnv(account ? { GOG_ACCOUNT: account } : undefined),
     });
     return { stdout: stdout.trim(), stderr: stderr.trim(), success: true, command: displayCommand };
   } catch (error: unknown) {
@@ -102,18 +122,18 @@ export async function checkGogInstalled(): Promise<{
   try {
     let version = "unknown";
     try {
-      const result = await execFileAsync(gogBin(), ["--version"], { timeout: 5000 });
+      const result = await execFileAsync(gogBin(), ["--version"], { timeout: 5000, env: gogEnv() });
       version = result.stdout.trim();
     } catch {
       try {
-        const result = await execFileAsync(gogBin(), ["version"], { timeout: 5000 });
+        const result = await execFileAsync(gogBin(), ["version"], { timeout: 5000, env: gogEnv() });
         version = result.stdout.trim();
       } catch { /* use default */ }
     }
 
     let accounts: string[] = [];
     try {
-      const acctResult = await execFileAsync(gogBin(), ["auth", "list", "--json"], { timeout: 5000 });
+      const acctResult = await execFileAsync(gogBin(), ["auth", "list", "--json"], { timeout: 5000, env: gogEnv() });
       const raw = acctResult.stdout.trim();
       try {
         const parsed = JSON.parse(raw);
@@ -126,7 +146,7 @@ export async function checkGogInstalled(): Promise<{
       }
     } catch {
       try {
-        const acctResult = await execFileAsync(gogBin(), ["auth", "list"], { timeout: 5000 });
+        const acctResult = await execFileAsync(gogBin(), ["auth", "list"], { timeout: 5000, env: gogEnv() });
         const raw = acctResult.stdout.trim();
         accounts = raw
           .split("\n")
@@ -146,7 +166,7 @@ let cachedAccount: string | null = null;
 export async function getDefaultAccount(): Promise<string | undefined> {
   if (cachedAccount) return cachedAccount;
   try {
-    const result = await execFileAsync(gogBin(), ["auth", "list"], { timeout: 5000 });
+    const result = await execFileAsync(gogBin(), ["auth", "list"], { timeout: 5000, env: gogEnv() });
     const lines = result.stdout.trim().split("\n");
     for (const line of lines) {
       const match = line.match(/\S+@\S+\.\S+/);
