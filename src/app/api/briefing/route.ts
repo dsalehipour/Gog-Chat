@@ -38,7 +38,7 @@ export async function GET(request: Request) {
   const dateParam = searchParams.get("date");
   const account = await getDefaultAccount();
 
-  const calArgs = ["calendar", "events", "--max", "10", "--json"];
+  const calArgs = ["calendar", "events", "--max", "25", "--json"];
   if (dateParam) {
     calArgs.push("--from", dateParam, "--to", dateParam);
   } else {

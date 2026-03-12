@@ -204,6 +204,7 @@ export default function DashboardView({
   onRemovedThreadHandled,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const calendarScrollRef = useRef<HTMLDivElement>(null);
   // ── Briefing state ──
   const [briefingSections, setBriefingSections] = useState<BriefingSection[]>([]);
   const [briefingLoading, setBriefingLoading] = useState(false);
@@ -457,6 +458,22 @@ export default function DashboardView({
     }
     prevCalOffset.current = calDayOffset;
   }, [calDayOffset, fetchCalendarDay]);
+
+  // Auto-scroll calendar to current/next event
+  useEffect(() => {
+    if (calLoading) return;
+    const container = calendarScrollRef.current;
+    if (!container) return;
+    const target = container.querySelector("[data-calendar-current]") as HTMLElement | null;
+    if (target) {
+      requestAnimationFrame(() => {
+        const containerTop = container.getBoundingClientRect().top;
+        const targetTop = target.getBoundingClientRect().top;
+        const offset = targetTop - containerTop - container.clientHeight / 2 + target.clientHeight / 2;
+        container.scrollTo({ top: container.scrollTop + offset, behavior: "smooth" });
+      });
+    }
+  }, [calLoading, calDayOffset, briefingSections]);
 
   const fetchEmailPreview = useCallback(async (threadId: string) => {
     if (emailPreviews[threadId]) return;
@@ -1110,12 +1127,14 @@ export default function DashboardView({
                 ) : !calendarSection || calendarSection.items.length === 0 ? (
                   <p className="text-xs text-text-muted">No events {calDayOffset === 0 ? "today" : "this day"}</p>
                 ) : (
+                  <div ref={calendarScrollRef} className="max-h-[400px] overflow-y-auto">
                   <ul className="space-y-1">
                     {(() => {
-                      const events = calendarSection.items.slice(0, 8);
+                      const events = calendarSection.items;
                       const now = Date.now();
                       const isToday = calDayOffset === 0;
                       let nowLineRendered = false;
+                      let scrollTargetSet = false;
 
                       const nowLine = (
                         <li key="now-line" className="flex items-center gap-2 py-0.5">
@@ -1166,10 +1185,14 @@ export default function DashboardView({
                           }
                         }
 
+                        const isScrollTarget = isToday && !scrollTargetSet && (isHappening || eventStart > now);
+                        if (isScrollTarget) scrollTargetSet = true;
+
                         items.push(
                           <li
                             key={item.id}
                             className="group relative"
+                            {...(isScrollTarget ? { "data-calendar-current": "true" } : {})}
                             onMouseEnter={() => hasTooltipData && setHoveredEventId(item.id)}
                             onMouseLeave={() => setHoveredEventId(null)}
                           >
@@ -1310,6 +1333,7 @@ export default function DashboardView({
                       return items;
                     })()}
                   </ul>
+                  </div>
                 )}
               </div>
 
