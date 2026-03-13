@@ -214,6 +214,7 @@ export default function DashboardView({
   const [calDayOffset, setCalDayOffset] = useState(0);
   const [calLoading, setCalLoading] = useState(false);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const [hoveredEventRect, setHoveredEventRect] = useState<DOMRect | null>(null);
   const [hoveredEmailId, setHoveredEmailId] = useState<string | null>(null);
   const [emailPreviews, setEmailPreviews] = useState<Record<string, { from: string; to: string; cc: string; bodyPreview: string; loading?: boolean }>>({});
   const [spamConfirmId, setSpamConfirmId] = useState<string | null>(null);
@@ -1127,7 +1128,7 @@ export default function DashboardView({
                 ) : !calendarSection || calendarSection.items.length === 0 ? (
                   <p className="text-xs text-text-muted">No events {calDayOffset === 0 ? "today" : "this day"}</p>
                 ) : (
-                  <div ref={calendarScrollRef} className="max-h-[400px] overflow-y-auto">
+                  <div ref={calendarScrollRef} className="max-h-[400px] overflow-y-auto" onScroll={() => { setHoveredEventId(null); setHoveredEventRect(null); }}>
                   <ul className="space-y-1">
                     {(() => {
                       const events = calendarSection.items;
@@ -1193,8 +1194,12 @@ export default function DashboardView({
                             key={item.id}
                             className="group relative"
                             {...(isScrollTarget ? { "data-calendar-current": "true" } : {})}
-                            onMouseEnter={() => hasTooltipData && setHoveredEventId(item.id)}
-                            onMouseLeave={() => setHoveredEventId(null)}
+                            onMouseEnter={(e) => {
+                              if (!hasTooltipData) return;
+                              setHoveredEventId(item.id);
+                              setHoveredEventRect(e.currentTarget.getBoundingClientRect());
+                            }}
+                            onMouseLeave={() => { setHoveredEventId(null); setHoveredEventRect(null); }}
                           >
                             <div
                               role="button"
@@ -1248,10 +1253,22 @@ export default function DashboardView({
                               <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
                             </div>
 
-                            {hasTooltipData && hoveredEventId === item.id && (
-                              <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-bg-secondary border border-border rounded-xl shadow-xl p-3 space-y-2 min-w-[260px]"
+                            {hasTooltipData && hoveredEventId === item.id && hoveredEventRect && (() => {
+                              const spaceBelow = window.innerHeight - hoveredEventRect.bottom;
+                              const flipUp = spaceBelow < 320;
+                              return (
+                              <div
+                                className="fixed z-[100] bg-bg-secondary border border-border rounded-xl shadow-xl p-3 space-y-2 min-w-[260px] max-h-[300px] overflow-y-auto"
+                                style={{
+                                  left: hoveredEventRect.left,
+                                  width: hoveredEventRect.width,
+                                  maxWidth: hoveredEventRect.width,
+                                  ...(flipUp
+                                    ? { bottom: window.innerHeight - hoveredEventRect.top + 4 }
+                                    : { top: hoveredEventRect.bottom + 4 }),
+                                }}
                                 onMouseEnter={() => setHoveredEventId(item.id)}
-                                onMouseLeave={() => setHoveredEventId(null)}
+                                onMouseLeave={() => { setHoveredEventId(null); setHoveredEventRect(null); }}
                               >
                                 {hasMeet && (
                                   <a
@@ -1320,7 +1337,7 @@ export default function DashboardView({
                                   </div>
                                 )}
                               </div>
-                            )}
+                              ); })()}
                           </li>
                         );
 
