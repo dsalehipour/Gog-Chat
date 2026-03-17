@@ -27,33 +27,56 @@ const GOG_SERVICE_MAP: Record<string, string> = {
   gog_auth: "auth",
 };
 
+function countMessageChars(messages: Anthropic.Messages.MessageParam[]): number {
+  let total = 0;
+  for (const m of messages) {
+    if (typeof m.content === "string") total += m.content.length;
+    else if (Array.isArray(m.content)) {
+      for (const block of m.content) {
+        if ("text" in block && typeof block.text === "string") total += block.text.length;
+        if ("content" in block && typeof block.content === "string") total += block.content.length;
+      }
+    }
+  }
+  return total;
+}
+
+function isToolResultMessage(msg: Anthropic.Messages.MessageParam): boolean {
+  if (!Array.isArray(msg.content)) return false;
+  return msg.content.some(
+    (block) => typeof block === "object" && "type" in block && block.type === "tool_result",
+  );
+}
+
 function trimMessages(
   messages: Anthropic.Messages.MessageParam[],
   maxContextChars: number = 180_000,
 ): Anthropic.Messages.MessageParam[] {
-  let totalChars = 0;
-  for (const m of messages) {
-    if (typeof m.content === "string") totalChars += m.content.length;
-    else if (Array.isArray(m.content)) {
-      for (const block of m.content) {
-        if ("text" in block && typeof block.text === "string") totalChars += block.text.length;
-        if ("content" in block && typeof block.content === "string") totalChars += block.content.length;
-      }
+  if (countMessageChars(messages) <= maxContextChars) return messages;
+
+  // Safe cut points: user messages that are NOT tool_result continuations.
+  // Cutting here guarantees every tool_result stays paired with its tool_use.
+  const safeCutPoints: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === "user" && !isToolResultMessage(messages[i])) {
+      safeCutPoints.push(i);
     }
   }
 
-  if (totalChars <= maxContextChars) return messages;
-
-  // Keep the system context fresh: drop oldest pairs but always keep last 4 messages
-  const keep = Math.max(4, Math.floor(messages.length / 2));
-  const trimmed = messages.slice(-keep);
-
-  // Ensure first message is from user
-  if (trimmed.length > 0 && trimmed[0].role !== "user") {
-    trimmed.shift();
+  // Try each cut point (ascending = least aggressive first).
+  // The first one that fits keeps the most recent context.
+  for (const cutPoint of safeCutPoints) {
+    if (cutPoint === 0) continue;
+    const trimmed = messages.slice(cutPoint);
+    if (countMessageChars(trimmed) <= maxContextChars) return trimmed;
   }
 
-  return trimmed;
+  // Nothing fits — return from the last safe cut point
+  if (safeCutPoints.length > 0) {
+    return messages.slice(safeCutPoints[safeCutPoints.length - 1]);
+  }
+
+  return messages.slice(-2);
 }
 
 export async function POST(request: Request) {
@@ -121,11 +144,7 @@ export async function POST(request: Request) {
               }
 
               if (e.status === 400 && e.message?.includes("token")) {
-                // Context too long — aggressively trim and retry once
-                currentMessages = trimMessages(currentMessages.slice(-4), cfgMaxCtx);
-                if (currentMessages.length > 0 && currentMessages[0].role !== "user") {
-                  currentMessages.shift();
-                }
+                currentMessages = trimMessages(currentMessages, Math.floor(cfgMaxCtx / 2));
                 send({ type: "text", content: "(Conversation was too long — trimmed earlier context to continue.)\n\n" });
                 continue;
               }
