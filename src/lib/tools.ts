@@ -249,7 +249,7 @@ If a gog command fails with "not found", "ENOENT", or similar, the gog CLI is no
 - \`gog sheets read\` requires BOTH a spreadsheet ID and a range: \`read <id> 'Sheet Name'!A1:Z100\`
 - If you don't know the sheet names, ALWAYS call \`metadata <id> --json\` first to discover sheet titles and their grid dimensions.
 - When a user pastes a Google Sheets URL like \`https://docs.google.com/spreadsheets/d/<ID>/edit?gid=<GID>\`, extract the ID from the URL path. The \`gid\` parameter maps to the \`sheetId\` field in the metadata response — use it to find the correct sheet title.
-- Sheet names with spaces must be quoted with single quotes in the range: \`'Weekly Schedule'!A1:Z50\`
+- Sheet names with spaces or special characters (like &) must be quoted with single quotes in the range: \`'B&Z Report'!A1:Z50\`
 - Use the gridProperties (rowCount, columnCount) from metadata to set a sensible range rather than guessing.
 
 ## Sheets — Writing Data (CRITICAL)
