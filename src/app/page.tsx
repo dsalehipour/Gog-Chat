@@ -50,9 +50,43 @@ function loadFromStorage<T>(key: string, fallback: T): T {
   }
 }
 
+const TOOL_OUTPUT_STORAGE_LIMIT = 500;
+const MAX_CONVERSATIONS_FALLBACK = 30;
+
+function trimConversationsForStorage(convos: Conversation[]): Conversation[] {
+  return convos.map((c) => ({
+    ...c,
+    messages: c.messages.map((m) => ({
+      ...m,
+      toolCalls: m.toolCalls?.map((tc) => ({
+        ...tc,
+        output:
+          tc.output.length > TOOL_OUTPUT_STORAGE_LIMIT
+            ? tc.output.slice(0, TOOL_OUTPUT_STORAGE_LIMIT) + "\n…(trimmed)"
+            : tc.output,
+      })),
+    })),
+  }));
+}
+
 function saveToStorage<T>(key: string, value: T) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(key, JSON.stringify(value));
+  const toStore =
+    key === "gc_conversations" && Array.isArray(value)
+      ? trimConversationsForStorage(value as Conversation[])
+      : value;
+  try {
+    localStorage.setItem(key, JSON.stringify(toStore));
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "QuotaExceededError" && key === "gc_conversations") {
+      try {
+        const recent = (toStore as Conversation[]).slice(0, MAX_CONVERSATIONS_FALLBACK);
+        localStorage.setItem(key, JSON.stringify(recent));
+      } catch {
+        /* localStorage full beyond recovery — data is safe in server backup */
+      }
+    }
+  }
 }
 
 function mergeLocal(local: Conversation[], remote: Conversation[]): Conversation[] {
