@@ -84,14 +84,17 @@ export interface GogResult {
   command: string;
 }
 
+function sanitizeArg(arg: string): string {
+  return arg.replace(/[;|`${}]/g, "");
+}
+
 export async function runGogCommand(
   args: string[],
   account?: string,
 ): Promise<GogResult> {
-  // execFile bypasses the shell, so args are passed directly to the process
-  // and don't need shell metacharacter sanitization.
-  const accountFlag = account ? ["--account", account] : [];
-  const fullArgs = [...args, ...accountFlag];
+  const sanitizedArgs = args.map(sanitizeArg);
+  const accountFlag = account ? ["--account", sanitizeArg(account)] : [];
+  const fullArgs = [...sanitizedArgs, ...accountFlag];
   const displayCommand = ["gog", ...fullArgs].join(" ");
 
   try {
