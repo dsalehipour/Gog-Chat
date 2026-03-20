@@ -3,9 +3,9 @@
   "version": "0.3.1",
   "main": "index.js",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3100",
     "build": "next build",
-    "start": "next start"
+    "start": "next start -p 3100"
   },
   "keywords": [],
   "author": "",
