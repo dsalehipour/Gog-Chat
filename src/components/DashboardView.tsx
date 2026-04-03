@@ -55,6 +55,9 @@ interface BriefingItem {
   date?: string;
   organizer?: { name: string; email: string };
   attendees?: EventAttendee[];
+  meetUrl?: string;
+  description?: string;
+  eventType?: string;
 }
 
 interface BriefingSection {
@@ -1134,6 +1137,7 @@ export default function DashboardView({
                       const events = calendarSection.items;
                       const now = Date.now();
                       const isToday = calDayOffset === 0;
+                      const oooPattern = /\b(ooo|out of office|pto|on leave|on vacation)\b/i;
                       let nowLineRendered = false;
                       let scrollTargetSet = false;
 
@@ -1175,6 +1179,8 @@ export default function DashboardView({
                         const isHappening = isToday && eventStart > 0 && eventEnd > 0 && now >= eventStart && now < eventEnd;
                         const isSoon = isToday && (isHappening || (minsUntilStart >= 0 && minsUntilStart <= 15));
 
+                        const isOOO = item.eventType === "outOfOffice" || oooPattern.test(item.text);
+
                         let hasExternal = false;
                         if (hasAttendees) {
                           const selfEmail = item.attendees!.find((a) => a.self)?.email;
@@ -1207,12 +1213,12 @@ export default function DashboardView({
                               onClick={() => window.open(item.url || "https://calendar.google.com", "_blank", "noopener")}
                               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); window.open(item.url || "https://calendar.google.com", "_blank", "noopener"); } }}
                               className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${
-                                isSoon ? "bg-accent/10 border border-accent/25 ring-1 ring-accent/15" : ""
+                                isOOO ? "opacity-50" : isSoon ? "bg-accent/10 border border-accent/25 ring-1 ring-accent/15" : ""
                               }`}
                             >
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className={`text-xs truncate flex-1 ${isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
+                                  <p className={`text-xs truncate flex-1 ${!isOOO && isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
                                   {hasMeet && (
                                     <a
                                       href={item.meetUrl}
@@ -1231,7 +1237,7 @@ export default function DashboardView({
                                       External
                                     </span>
                                   )}
-                                  {isSoon && (
+                                  {isSoon && !isOOO && (
                                     <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${isHappening ? "text-success bg-success/15" : "text-accent bg-accent/15 animate-pulse"}`}>
                                       {isHappening ? "Now" : minsUntilStart <= 1 ? "Starting" : `${minsUntilStart}m`}
                                     </span>

@@ -26,6 +26,7 @@ interface BriefingItem {
   attendees?: Attendee[];
   meetUrl?: string;
   description?: string;
+  eventType?: string;
 }
 
 interface BriefingSection {
@@ -157,6 +158,7 @@ export async function GET(request: Request) {
               attendees,
               meetUrl: meetUrl || undefined,
               description: description || undefined,
+              eventType: typeof e.eventType === "string" ? e.eventType : undefined,
             };
           },
         ),
