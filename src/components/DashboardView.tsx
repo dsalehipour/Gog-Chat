@@ -217,6 +217,7 @@ export default function DashboardView({
   const [calDayOffset, setCalDayOffset] = useState(0);
   const [calLoading, setCalLoading] = useState(false);
   const [hoveredEventId, setHoveredEventId] = useState<string | null>(null);
+  const [oooExpanded, setOooExpanded] = useState(false);
   const [hoveredEventRect, setHoveredEventRect] = useState<DOMRect | null>(null);
   const [hoveredEmailId, setHoveredEmailId] = useState<string | null>(null);
   const [emailPreviews, setEmailPreviews] = useState<Record<string, { from: string; to: string; cc: string; bodyPreview: string; loading?: boolean }>>({});
@@ -1151,9 +1152,69 @@ export default function DashboardView({
                         </li>
                       );
 
+                      const oooEvents = events.filter((item) => item.eventType === "outOfOffice" || oooPattern.test(item.text));
+                      const regularEvents = events.filter((item) => !(item.eventType === "outOfOffice" || oooPattern.test(item.text)));
+
                       const items: React.ReactNode[] = [];
 
-                      events.forEach((item, idx) => {
+                      if (oooEvents.length > 0) {
+                        items.push(
+                          <li key="ooo-group">
+                            <button
+                              type="button"
+                              onClick={() => setOooExpanded((v) => !v)}
+                              className="flex items-center gap-2 w-full px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors opacity-50"
+                            >
+                              <ChevronDown size={12} className={`text-text-muted shrink-0 transition-transform ${oooExpanded ? "" : "-rotate-90"}`} />
+                              <span className="text-xs text-text-muted">Out of office</span>
+                              <span className="text-[10px] text-text-muted/70">{oooEvents.length}</span>
+                            </button>
+                            {oooExpanded && (
+                              <ul className="space-y-0.5 mt-0.5">
+                                {oooEvents.map((item) => {
+                                  const dur = formatDuration(item.startTime, item.endTime);
+                                  let durationMins = 0;
+                                  try {
+                                    if (item.startTime && item.endTime) {
+                                      durationMins = Math.round((new Date(item.endTime).getTime() - new Date(item.startTime).getTime()) / 60000);
+                                    }
+                                  } catch { /* ignore */ }
+                                  const barPct = durationMins > 0 ? Math.min(Math.max(durationMins / 120, 0.15), 1) : 0;
+                                  return (
+                                    <li key={item.id} className="group relative">
+                                      <div
+                                        role="button"
+                                        tabIndex={0}
+                                        onClick={() => window.open(item.url || "https://calendar.google.com", "_blank", "noopener")}
+                                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); window.open(item.url || "https://calendar.google.com", "_blank", "noopener"); } }}
+                                        className="flex items-center gap-2 px-2 py-1 pl-7 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer opacity-50"
+                                      >
+                                        <div className="flex-1 min-w-0">
+                                          <div className="flex items-center gap-2">
+                                            <p className="text-xs truncate flex-1 text-text">{item.text}</p>
+                                            {item.detail && <span className="text-xs text-text-muted shrink-0">{item.detail}</span>}
+                                          </div>
+                                          {barPct > 0 && (
+                                            <div className="flex items-center gap-2 mt-1">
+                                              <div className="flex-1 h-1.5 bg-bg-tertiary rounded-full overflow-hidden">
+                                                <div className="h-full rounded-full bg-text-muted/30" style={{ width: `${barPct * 100}%` }} />
+                                              </div>
+                                              {dur && <span className="text-[10px] font-medium text-text-secondary shrink-0 w-12 text-right">{dur}</span>}
+                                            </div>
+                                          )}
+                                        </div>
+                                        <ExternalLink size={10} className="shrink-0 opacity-0 group-hover:opacity-100 text-text-muted" />
+                                      </div>
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            )}
+                          </li>
+                        );
+                      }
+
+                      regularEvents.forEach((item, idx) => {
                         const eventStart = item.startTime ? new Date(item.startTime).getTime() : 0;
 
                         if (isToday && !nowLineRendered && eventStart > now) {
@@ -1178,8 +1239,6 @@ export default function DashboardView({
                         const minsUntilStart = eventStart ? Math.round((eventStart - now) / 60000) : Infinity;
                         const isHappening = isToday && eventStart > 0 && eventEnd > 0 && now >= eventStart && now < eventEnd;
                         const isSoon = isToday && (isHappening || (minsUntilStart >= 0 && minsUntilStart <= 15));
-
-                        const isOOO = item.eventType === "outOfOffice" || oooPattern.test(item.text);
 
                         let hasExternal = false;
                         if (hasAttendees) {
@@ -1213,12 +1272,12 @@ export default function DashboardView({
                               onClick={() => window.open(item.url || "https://calendar.google.com", "_blank", "noopener")}
                               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); window.open(item.url || "https://calendar.google.com", "_blank", "noopener"); } }}
                               className={`flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-bg-hover transition-colors cursor-pointer ${
-                                isOOO ? "opacity-50" : isSoon ? "bg-accent/10 border border-accent/25 ring-1 ring-accent/15" : ""
+                                isSoon ? "bg-accent/10 border border-accent/25 ring-1 ring-accent/15" : ""
                               }`}
                             >
                               <div className="flex-1 min-w-0">
                                 <div className="flex items-center gap-2">
-                                  <p className={`text-xs truncate flex-1 ${!isOOO && isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
+                                  <p className={`text-xs truncate flex-1 ${isSoon ? "text-text font-semibold" : "text-text"}`}>{item.text}</p>
                                   {hasMeet && (
                                     <a
                                       href={item.meetUrl}
@@ -1237,7 +1296,7 @@ export default function DashboardView({
                                       External
                                     </span>
                                   )}
-                                  {isSoon && !isOOO && (
+                                  {isSoon && (
                                     <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full shrink-0 ${isHappening ? "text-success bg-success/15" : "text-accent bg-accent/15 animate-pulse"}`}>
                                       {isHappening ? "Now" : minsUntilStart <= 1 ? "Starting" : `${minsUntilStart}m`}
                                     </span>
@@ -1347,7 +1406,7 @@ export default function DashboardView({
                           </li>
                         );
 
-                        if (isToday && !nowLineRendered && idx === events.length - 1) {
+                        if (isToday && !nowLineRendered && idx === regularEvents.length - 1) {
                           items.push(nowLine);
                           nowLineRendered = true;
                         }
