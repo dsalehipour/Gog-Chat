@@ -9,6 +9,7 @@ import {
 import {
   extractPersonaPatterns,
   extractDecisionCandidates,
+  extractImprovementAreas,
 } from "../lib/transcript-analyzer";
 import type { ExistingDWNode } from "../lib/transcript-analyzer";
 
@@ -34,6 +35,10 @@ function personaOutputPath(speaker: string): string {
 }
 const DW_CANDIDATES_OUTPUT = join(ENGINEERING_PROJECT, "docs", "decision-web", "dw-candidates.json");
 const DW_SOURCE = join(ENGINEERING_PROJECT, "docs", "decision-web", "decision-web.json");
+function improvementsOutputPath(speaker: string): string {
+  const slug = speaker.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+  return join(ENGINEERING_PROJECT, "docs", `${slug}-improvements.json`);
+}
 
 // ---------------------------------------------------------------------------
 // CLI helpers
@@ -44,13 +49,14 @@ function log(msg: string): void {
   console.log(`[${ts}] ${msg}`);
 }
 
-function parseArgs(): { dryRun: boolean; fetchOnly: boolean; personaOnly: boolean; dwOnly: boolean } {
+function parseArgs(): { dryRun: boolean; fetchOnly: boolean; personaOnly: boolean; dwOnly: boolean; improvementsOnly: boolean } {
   const args = process.argv.slice(2);
   return {
     dryRun: args.includes("--dry-run"),
     fetchOnly: args.includes("--fetch-only"),
     personaOnly: args.includes("--persona-only"),
     dwOnly: args.includes("--dw-only"),
+    improvementsOnly: args.includes("--improvements-only"),
   };
 }
 
@@ -85,9 +91,11 @@ function formatDuration(ms: number): string {
 
 async function main(): Promise<void> {
   const startTime = Date.now();
-  const { dryRun, fetchOnly, personaOnly, dwOnly } = parseArgs();
-  const runPersona = !dwOnly && !fetchOnly;
-  const runDW = !personaOnly && !fetchOnly;
+  const { dryRun, fetchOnly, personaOnly, dwOnly, improvementsOnly } = parseArgs();
+  const onlyFlags = [personaOnly, dwOnly, improvementsOnly].filter(Boolean);
+  const runPersona = (onlyFlags.length === 0 || personaOnly) && !fetchOnly;
+  const runDW = (onlyFlags.length === 0 || dwOnly) && !fetchOnly;
+  const runImprovements = (onlyFlags.length === 0 || improvementsOnly) && !fetchOnly;
 
   console.log("\n========================================");
   console.log("  Standup Transcript Analysis Pipeline  ");
@@ -113,7 +121,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  log(`Mode: ${dryRun ? "DRY RUN" : fetchOnly ? "FETCH ONLY" : [runPersona && "persona", runDW && "decision-web"].filter(Boolean).join(" + ")}`);
+  log(`Mode: ${dryRun ? "DRY RUN" : fetchOnly ? "FETCH ONLY" : [runPersona && "persona", runDW && "decision-web", runImprovements && "improvements"].filter(Boolean).join(" + ")}`);
   log(`Output → ${ENGINEERING_PROJECT}\n`);
 
   // -------------------------------------------------------------------------
@@ -173,7 +181,7 @@ async function main(): Promise<void> {
   // -------------------------------------------------------------------------
   const { speakerPresent, speakerAbsent } = partitionBySpeaker(fetched, TARGET_SPEAKER);
   log(`Speaker "${TARGET_SPEAKER}" found in ${speakerPresent.length}/${fetched.length} transcripts`);
-  log(`  → ${speakerPresent.length} transcripts for persona extraction`);
+  log(`  → ${speakerPresent.length} transcripts for persona/improvements extraction`);
   log(`  → ${fetched.length} transcripts for DW extraction (all)\n`);
 
   if (fetchOnly) {
@@ -184,11 +192,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (runPersona && speakerPresent.length === 0) {
+  if ((runPersona || runImprovements) && speakerPresent.length === 0) {
     log(`WARNING: "${TARGET_SPEAKER}" was not found as a speaker in any transcript.`);
     log(`  Gemini transcripts use "SpeakerName: text" format.`);
     log(`  Check if the name appears differently. Override with: SPEAKER_NAME="Other Name" npx tsx ...`);
-    log(`  Skipping persona extraction.\n`);
+    log(`  Skipping persona/improvements extraction.\n`);
   }
 
   // -------------------------------------------------------------------------
@@ -245,6 +253,28 @@ async function main(): Promise<void> {
   }
 
   // -------------------------------------------------------------------------
+  // Stage 3c: Improvement areas (only transcripts where speaker is present)
+  // -------------------------------------------------------------------------
+  if (runImprovements && speakerPresent.length > 0) {
+    const impStart = Date.now();
+    log(`[Stage 3c] Extracting improvement areas from ${speakerPresent.length} transcripts...\n`);
+
+    try {
+      const profile = await extractImprovementAreas(speakerPresent, (msg) => console.log(msg), TARGET_SPEAKER);
+      const outPath = improvementsOutputPath(TARGET_SPEAKER);
+      writeOutput(outPath, profile);
+
+      console.log("");
+      log(`Improvement profile written to ${outPath}`);
+      log(`  Areas identified: ${profile.areas.length}`);
+      log(`  Source transcripts: ${speakerPresent.length} (where ${TARGET_SPEAKER} speaks)`);
+      log(`  Time: ${formatDuration(Date.now() - impStart)}\n`);
+    } catch (err) {
+      log(`ERROR: Improvement extraction failed: ${err instanceof Error ? err.message : err}\n`);
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Done
   // -------------------------------------------------------------------------
   console.log("========================================");
@@ -252,10 +282,13 @@ async function main(): Promise<void> {
   console.log("========================================\n");
 
   if (runPersona) {
-    console.log(`  Persona profile → ${personaOutputPath(TARGET_SPEAKER)}`);
+    console.log(`  Persona profile  → ${personaOutputPath(TARGET_SPEAKER)}`);
   }
   if (runDW) {
-    console.log(`  DW candidates   → ${DW_CANDIDATES_OUTPUT}`);
+    console.log(`  DW candidates    → ${DW_CANDIDATES_OUTPUT}`);
+  }
+  if (runImprovements) {
+    console.log(`  Improvements     → ${improvementsOutputPath(TARGET_SPEAKER)}`);
   }
   console.log("");
 }
